@@ -5,9 +5,11 @@ A lightweight dashboard for ranking live Meta ads, comparing week-over-week, mon
 ## Files
 
 - `server.py` serves the dashboard and exposes `/api/dashboard`.
+- `api/dashboard.py` is the Vercel Python Function for the hosted `/api/dashboard` route.
 - `index.html`, `styles.css`, and `app.js` render the dashboard UI.
 - `.env.example` shows the local environment variables the server reads.
 - `supabase/schema.sql` contains the database schema for historical Meta sync storage.
+- `vercel.json` configures the hosted function duration for Vercel deployments.
 
 ## Run locally
 
@@ -45,6 +47,9 @@ python3 server.py
 - Use this folder as the canonical source repo: `/Users/jeck/Desktop/Justin's Dev Projects/Meta Creative Dashboard`
 - Keep secrets only in `.env.local` locally and in Vercel environment variables for hosted environments.
 - For Supabase-backed environments, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_ENABLE_SYNC=1` to Vercel.
+- Also add `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID`, and `META_BUSINESS_ID` to the Vercel project so the hosted function can read Meta and write to Supabase.
 - Push production-ready changes to the `main` branch.
 - Create feature branches for future optimizations, then merge back into `main` after review.
-- This project is currently structured as a local Python server prototype. Before a true Vercel production deployment, the backend should be adapted to a Vercel-friendly serverless shape.
+- Import the GitHub repository into Vercel as an `Other` project, keep the root directory at the repo root, and leave the build command empty.
+- Once the repo is connected in Vercel, pushes to `main` create Production Deployments and pushes to other branches create Preview Deployments.
+- The hosted API now has a Vercel-native Python entry point at `api/dashboard.py`, so future Git pushes can deploy without relying on the local server.
