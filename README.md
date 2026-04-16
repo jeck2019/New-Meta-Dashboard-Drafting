@@ -28,6 +28,7 @@ python3 server.py
 - When valid Meta credentials are present, the UI loads Meta ad-level insights from `/api/dashboard` and includes ads with delivery in the selected reporting window.
 - The deployed dashboard forces a fresh Meta sync on open, refreshes again every 5 minutes while the tab stays visible, and re-checks when the user returns to the tab.
 - When Supabase is configured and `SUPABASE_ENABLE_SYNC=1`, each fresh Meta sync writes structured history into Supabase. Cached dashboard hits do not create duplicate writes.
+- Vercel is configured with a background cron path at `/api/cron_sync` that runs once per day at `05:00 UTC` so the warehouse still updates even when nobody opens the app.
 - The dashboard supports the built-in 7-day and 30-day presets plus any exact custom `since` / `until` date range you apply from the UI.
 - The Ad Content tab shows the primary text, headlines, descriptions, CTA metadata, landing pages, and returned creative variants for the ads currently in view.
 - Average watch time is still a placeholder field in the current backend response and can be upgraded with additional Meta video metrics in the next pass.
@@ -49,8 +50,10 @@ python3 server.py
 - Keep secrets only in `.env.local` locally and in Vercel environment variables for hosted environments.
 - For Supabase-backed environments, add `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_ENABLE_SYNC=1` to Vercel.
 - Also add `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID`, and `META_BUSINESS_ID` to the Vercel project so the hosted function can read Meta and write to Supabase.
+- Add `CRON_SECRET` in Vercel to secure scheduled sync calls. Vercel sends it automatically as a bearer token to cron jobs when the variable is present.
 - Push production-ready changes to the `main` branch.
 - Create feature branches for future optimizations, then merge back into `main` after review.
 - Import the GitHub repository into Vercel as an `Other` project, keep the root directory at the repo root, and leave the build command empty.
 - Once the repo is connected in Vercel, pushes to `main` create Production Deployments and pushes to other branches create Preview Deployments.
-- The hosted API now has a Vercel-native Python entry point at `api/dashboard.py`, so future Git pushes can deploy without relying on the local server.
+- The hosted API now has Vercel-native Python entry points at `api/dashboard.py` and `api/cron_sync.py`, so future Git pushes can deploy without relying on the local server.
+- The cron schedule is set conservatively for compatibility with all Vercel plans. If this project is on Pro or Enterprise and you want more frequent background syncs, we can safely move it to hourly.

@@ -190,7 +190,31 @@ def get_settings():
         'SUPABASE_ANON_KEY': merged.get('SUPABASE_ANON_KEY', '').strip(),
         'SUPABASE_SERVICE_ROLE_KEY': merged.get('SUPABASE_SERVICE_ROLE_KEY', '').strip(),
         'SUPABASE_ENABLE_SYNC': merged.get('SUPABASE_ENABLE_SYNC', '0').strip(),
+        'CRON_SECRET': merged.get('CRON_SECRET', '').strip(),
         'PORT': merged.get('PORT', '8000').strip(),
+    }
+
+
+def cron_request_authorized(settings, headers):
+    cron_secret = settings.get('CRON_SECRET', '').strip()
+    auth_header = headers.get('Authorization') or headers.get('authorization') or ''
+    user_agent = headers.get('User-Agent') or headers.get('user-agent') or ''
+
+    if cron_secret:
+        return auth_header == f'Bearer {cron_secret}'
+    return user_agent == 'vercel-cron/1.0'
+
+
+def build_sync_summary(payload):
+    storage = payload.get('storage', {})
+    ok = payload.get('source') == 'meta' and storage.get('configured') and storage.get('enabled') and storage.get('persisted')
+    return {
+        'ok': ok,
+        'source': payload.get('source'),
+        'generatedAt': payload.get('generatedAt'),
+        'account': (payload.get('account') or {}).get('name', ''),
+        'ads': len(payload.get('ads') or []),
+        'storage': storage,
     }
 
 
@@ -1490,6 +1514,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         if parsed.path == '/api/dashboard':
             self.handle_dashboard(parsed)
             return
+        if parsed.path == '/api/cron-sync':
+            self.handle_cron_sync()
+            return
         super().do_GET()
 
     def handle_dashboard(self, parsed):
@@ -1520,6 +1547,25 @@ class AppHandler(SimpleHTTPRequestHandler):
                 'details': exc.payload,
                 'ads': [],
                 'generatedAt': datetime.utcnow().isoformat() + 'Z',
+            })
+
+    def handle_cron_sync(self):
+        settings = get_settings()
+        if not cron_request_authorized(settings, self.headers):
+            self.respond_json(HTTPStatus.UNAUTHORIZED, {
+                'ok': False,
+                'error': 'Unauthorized cron request.',
+            })
+            return
+
+        try:
+            summary = build_sync_summary(build_dashboard_payload(settings, force_refresh=True))
+            self.respond_json(HTTPStatus.OK if summary['ok'] else HTTPStatus.INTERNAL_SERVER_ERROR, summary)
+        except MetaAPIError as exc:
+            self.respond_json(exc.status, {
+                'ok': False,
+                'error': exc.message,
+                'details': exc.payload,
             })
 
     def respond_json(self, status, payload):
