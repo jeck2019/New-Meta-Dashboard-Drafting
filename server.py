@@ -1120,9 +1120,9 @@ def build_snapshot_rows(sync_run_id, payload_ads, generated_at):
 
 
 def build_creative_asset_rows(sync_run_id, payload_ads, generated_at):
-    rows = []
+    rows_by_key = {}
     for ad in payload_ads:
-        rows.append({
+        row = {
             'asset_key': ad.get('creativeId') or f"ad:{ad['id']}",
             'creative_id': ad.get('creativeId', ''),
             'ad_id': ad['id'],
@@ -1151,8 +1151,9 @@ def build_creative_asset_rows(sync_run_id, payload_ads, generated_at):
             'cta_variants': ad.get('ctaVariants', []),
             'last_seen_sync_run_id': sync_run_id,
             'last_seen_at': generated_at,
-        })
-    return rows
+        }
+        rows_by_key[row['asset_key']] = row
+    return list(rows_by_key.values())
 
 
 def build_window_metric_rows(sync_run_id, payload_ads, windows):
