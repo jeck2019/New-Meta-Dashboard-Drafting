@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Strikeman Meta Command Center</title>
+    <meta
+      name="description"
+      content="Strikeman Meta ads dashboard with live performance insights, creative signals, creative content inspection, and optimization recommendations."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css?v=20260416a" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand-mark">S</div>
+          <div>
+            <p class="eyebrow">Strikeman</p>
+            <h1>Meta Command Center</h1>
+          </div>
+        </div>
+
+        <nav class="nav-links">
+          <button class="nav-link is-active" data-target="dashboard">Dashboard</button>
+          <button class="nav-link" data-target="ads-panel">Live Ads</button>
+          <button class="nav-link" data-target="content-panel">Ad Content</button>
+          <button class="nav-link" data-target="detail-panel">Detail</button>
+          <button class="nav-link" data-target="recommendations-panel">Recommendations</button>
+        </nav>
+
+        <section class="sidebar-card">
+          <p class="sidebar-label">Connection</p>
+          <h3 id="connection-heading">Checking Meta connection</h3>
+          <p id="connection-copy">Attempting to load live Strikeman ad data.</p>
+        </section>
+
+        <section class="sidebar-card">
+          <p class="sidebar-label">Account</p>
+          <h3 id="account-heading">Not connected yet</h3>
+          <p id="account-copy">When live data is available, this card shows the ad account and sync timestamp.</p>
+        </section>
+      </aside>
+
+      <main class="workspace" id="dashboard">
+        <header class="hero-panel">
+          <div class="hero-copy">
+            <p class="kicker">Dry fire creative intelligence</p>
+            <h2>Find the ads earning the next dollar.</h2>
+            <p>
+              Compare ad-level KPI shifts, inspect winning creative signals, surface underperformers that need attention first, and now review the exact ad content that is live.
+            </p>
+          </div>
+
+          <div class="hero-controls">
+            <div class="control-block">
+              <label>Reporting range</label>
+              <div class="segmented-control" id="range-toggle">
+                <button class="is-active" data-range="7d">Last 7 days</button>
+                <button data-range="30d">Last 30 days</button>
+                <button data-range="custom">Custom</button>
+              </div>
+            </div>
+
+            <div class="control-block">
+              <label for="search-input">Search ads</label>
+              <input id="search-input" type="search" placeholder="Ad name, campaign, product, copy" />
+            </div>
+
+            <div class="filter-row">
+              <div class="control-block compact">
+                <label for="campaign-filter">Campaign</label>
+                <select id="campaign-filter"></select>
+              </div>
+              <div class="control-block compact">
+                <label for="tier-filter">Tier</label>
+                <select id="tier-filter"></select>
+              </div>
+            </div>
+
+            <div class="control-block control-block-wide">
+              <div class="custom-range-head">
+                <label for="custom-start-date">Custom date range</label>
+                <span class="small-note">Compared against the immediately previous matching period.</span>
+              </div>
+              <div class="custom-range-controls">
+                <input id="custom-start-date" type="date" />
+                <input id="custom-end-date" type="date" />
+                <button id="apply-custom-range" type="button" class="action-button">Apply range</button>
+              </div>
+              <p class="small-note" id="custom-range-status">Select exact dates, then apply to load a custom reporting window.</p>
+            </div>
+          </div>
+        </header>
+
+        <section class="banner-strip">
+          <div class="banner-pill" id="banner-status">Status: initializing</div>
+          <div class="banner-pill" id="banner-source">Preparing dashboard</div>
+          <div class="banner-pill" id="banner-account">Waiting for account data</div>
+        </section>
+
+        <section class="metrics-grid" id="metrics-grid"></section>
+
+        <section class="layout-grid">
+          <article class="panel panel-table" id="ads-panel">
+            <div class="panel-head panel-head-interactive">
+              <div>
+                <p class="panel-kicker">Ad rankings</p>
+                <h3>Performance board</h3>
+              </div>
+              <div class="panel-head-actions">
+                <p class="panel-subtle" id="table-summary"></p>
+                <button id="ads-collapse-toggle" type="button" class="panel-toggle">Collapse</button>
+              </div>
+            </div>
+            <div class="table-shell" id="ads-panel-body">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Ad</th>
+                    <th>Spend</th>
+                    <th>Sales</th>
+                    <th>ROAS</th>
+                    <th>CPA</th>
+                    <th>Reach</th>
+                    <th>Clicks</th>
+                    <th>Freq.</th>
+                    <th>Orders</th>
+                    <th>Tier</th>
+                    <th>Preview</th>
+                  </tr>
+                </thead>
+                <tbody id="ads-tbody"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <aside class="stack">
+            <article class="panel" id="leaderboard-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-kicker">Creative signals</p>
+                  <h3>What is winning now</h3>
+                </div>
+              </div>
+              <div class="leaderboard-stack">
+                <section class="leaderboard-card">
+                  <div class="leaderboard-head">
+                    <h4>Top copy</h4>
+                    <span>ROAS-weighted</span>
+                  </div>
+                  <div id="copy-leaderboard"></div>
+                </section>
+                <section class="leaderboard-card">
+                  <div class="leaderboard-head">
+                    <h4>Best hooks</h4>
+                    <span>Video start efficiency</span>
+                  </div>
+                  <div id="hook-leaderboard"></div>
+                </section>
+                <section class="leaderboard-card">
+                  <div class="leaderboard-head">
+                    <h4>Landing pages</h4>
+                    <span>Visited from ads</span>
+                  </div>
+                  <div id="landing-leaderboard"></div>
+                </section>
+              </div>
+            </article>
+          </aside>
+        </section>
+
+        <section class="detail-grid">
+          <article class="panel" id="detail-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">Selected ad</p>
+                <h3>Ad detail</h3>
+              </div>
+            </div>
+            <div id="detail-content"></div>
+          </article>
+
+          <article class="panel" id="recommendations-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker">Optimization plan</p>
+                <h3>Recommendations</h3>
+              </div>
+            </div>
+            <div id="recommendations-list"></div>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel" id="content-panel">
+            <div class="panel-head panel-head-interactive">
+              <div>
+                <p class="panel-kicker">Ad content</p>
+                <h3>Live creative library</h3>
+              </div>
+              <div class="panel-head-actions">
+                <p class="panel-subtle" id="content-summary"></p>
+                <button id="content-collapse-toggle" type="button" class="panel-toggle">Collapse</button>
+              </div>
+            </div>
+            <div class="content-library" id="content-library"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <div class="viewer-overlay is-hidden" id="ad-viewer" aria-hidden="true">
+      <div class="viewer-dialog" id="ad-viewer-dialog" role="dialog" aria-modal="true" aria-labelledby="viewer-title">
+        <button type="button" class="viewer-close" id="viewer-close" aria-label="Close ad viewer">Close</button>
+        <div class="viewer-layout">
+          <section class="viewer-stage" id="viewer-stage"></section>
+          <aside class="viewer-sidebar">
+            <p class="panel-kicker">Live ad preview</p>
+            <h3 id="viewer-title">Ad viewer</h3>
+            <div id="viewer-meta"></div>
+          </aside>
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js?v=20260416a"></script>
+  </body>
+</html>

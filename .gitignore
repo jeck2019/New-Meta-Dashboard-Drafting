@@ -1,0 +1,10 @@
+.env.local
+.env
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vercel/
+archive-pre-live-sync-2026-04-14/
+pre-custom-range-and-content-2026-04-14/
