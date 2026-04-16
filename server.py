@@ -4,6 +4,7 @@ import json
 import math
 import os
 import time
+import uuid
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -118,9 +119,37 @@ INSIGHTS_FIELDS_FALLBACK = ','.join([
 ])
 
 SERIES_FIELDS = ','.join(['ad_id', 'action_values', 'date_start'])
+DAILY_INSIGHTS_FIELDS_FULL = ','.join([
+    'ad_id',
+    'ad_name',
+    'date_start',
+    'date_stop',
+    'spend',
+    'clicks',
+    'reach',
+    'frequency',
+    'actions',
+    'action_values',
+    'outbound_clicks',
+    'video_play_actions',
+    'video_p25_watched_actions',
+    'video_p50_watched_actions',
+    'video_p75_watched_actions',
+    'video_p95_watched_actions',
+])
+SUPABASE_CHUNK_SIZE = 200
+PRIMARY_RANGE_KEYS = ('7d', '30d', 'custom')
 
 
 class MetaAPIError(Exception):
+    def __init__(self, message, status=HTTPStatus.BAD_GATEWAY, payload=None):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+        self.payload = payload or {}
+
+
+class SupabaseAPIError(Exception):
     def __init__(self, message, status=HTTPStatus.BAD_GATEWAY, payload=None):
         super().__init__(message)
         self.message = message
@@ -157,6 +186,10 @@ def get_settings():
         'META_ACCESS_TOKEN': merged.get('META_ACCESS_TOKEN', '').strip(),
         'META_AD_ACCOUNT_ID': merged.get('META_AD_ACCOUNT_ID', '').strip(),
         'META_BUSINESS_ID': merged.get('META_BUSINESS_ID', '').strip(),
+        'SUPABASE_URL': merged.get('SUPABASE_URL', '').strip(),
+        'SUPABASE_ANON_KEY': merged.get('SUPABASE_ANON_KEY', '').strip(),
+        'SUPABASE_SERVICE_ROLE_KEY': merged.get('SUPABASE_SERVICE_ROLE_KEY', '').strip(),
+        'SUPABASE_ENABLE_SYNC': merged.get('SUPABASE_ENABLE_SYNC', '0').strip(),
         'PORT': merged.get('PORT', '8000').strip(),
     }
 
@@ -179,28 +212,46 @@ def graph_url(path, params):
     return f'https://graph.facebook.com/{GRAPH_VERSION}/{path}?{query}'
 
 
-def request_json(url):
-    req = request.Request(
-        url,
-        headers={
-            'Accept': 'application/json',
-            'User-Agent': 'StrikemanMetaCommandCenter/1.0',
-        },
-    )
-
+def request_json_with_headers(url, method='GET', payload=None, headers=None, timeout=30, error_cls=MetaAPIError):
+    request_headers = {
+        'Accept': 'application/json',
+        'User-Agent': 'StrikemanMetaCommandCenter/1.0',
+        **(headers or {}),
+    }
+    body = None
+    if payload is not None:
+        if isinstance(payload, (bytes, bytearray)):
+            body = payload
+        else:
+            body = json.dumps(payload).encode('utf-8')
+            request_headers.setdefault('Content-Type', 'application/json')
+    req = request.Request(url, data=body, method=method, headers=request_headers)
     try:
-        with request.urlopen(req, timeout=30) as response:
-            return json.loads(response.read().decode('utf-8'))
+        with request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode('utf-8')
+            if not raw:
+                return {}
+            return json.loads(raw)
     except error.HTTPError as exc:
-        payload = exc.read().decode('utf-8')
+        raw = exc.read().decode('utf-8', errors='replace')
         try:
-            data = json.loads(payload)
+            data = json.loads(raw)
         except json.JSONDecodeError:
-            data = {'error': {'message': payload or 'Unknown Meta API error'}}
-        message = data.get('error', {}).get('message', 'Unknown Meta API error')
-        raise MetaAPIError(message, status=exc.code, payload=data)
+            data = {'error': {'message': raw or 'Unknown API error'}}
+        message = (
+            data.get('message')
+            or data.get('error_description')
+            or data.get('error', {}).get('message')
+            or raw
+            or 'Unknown API error'
+        )
+        raise error_cls(message, status=exc.code, payload=data)
     except error.URLError as exc:
-        raise MetaAPIError(f'Unable to reach Meta API: {exc.reason}')
+        raise error_cls(f'Unable to reach API: {exc.reason}')
+
+
+def request_json(url):
+    return request_json_with_headers(url, error_cls=MetaAPIError)
 
 
 def meta_get(path, params, token):
@@ -219,6 +270,73 @@ def meta_get_paginated(path, params, token, limit_pages=20):
         page += 1
 
     return results
+
+
+def env_flag(value):
+    return str(value or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def supabase_configured(settings):
+    return bool(settings.get('SUPABASE_URL') and settings.get('SUPABASE_SERVICE_ROLE_KEY'))
+
+
+def supabase_sync_enabled(settings):
+    return supabase_configured(settings) and env_flag(settings.get('SUPABASE_ENABLE_SYNC'))
+
+
+def supabase_headers(settings, prefer=None):
+    token = settings['SUPABASE_SERVICE_ROLE_KEY']
+    headers = {
+        'apikey': token,
+        'Authorization': f'Bearer {token}',
+    }
+    if prefer:
+        headers['Prefer'] = prefer
+    return headers
+
+
+def supabase_url(settings, table, query=None):
+    base = settings['SUPABASE_URL'].rstrip('/')
+    query_string = parse.urlencode(query or {}, doseq=True)
+    suffix = f'?{query_string}' if query_string else ''
+    return f'{base}/rest/v1/{table}{suffix}'
+
+
+def supabase_request(settings, method, table, payload=None, query=None, prefer=None):
+    return request_json_with_headers(
+        supabase_url(settings, table, query),
+        method=method,
+        payload=payload,
+        headers=supabase_headers(settings, prefer=prefer),
+        timeout=60,
+        error_cls=SupabaseAPIError,
+    )
+
+
+def chunked(rows, size=SUPABASE_CHUNK_SIZE):
+    for start in range(0, len(rows), size):
+        yield rows[start:start + size]
+
+
+def supabase_insert_rows(settings, table, rows):
+    if not rows:
+        return
+    for batch in chunked(rows):
+        supabase_request(settings, 'POST', table, payload=batch, prefer='return=minimal')
+
+
+def supabase_upsert_rows(settings, table, rows, on_conflict):
+    if not rows:
+        return
+    for batch in chunked(rows):
+        supabase_request(
+            settings,
+            'POST',
+            table,
+            payload=batch,
+            query={'on_conflict': on_conflict},
+            prefer='resolution=merge-duplicates,return=minimal',
+        )
 
 
 def parse_iso_date(raw_value):
@@ -504,6 +622,7 @@ def extract_creative_fields(ad):
     landing_path = normalize_path(landing_url)
 
     return {
+        'creativeId': creative.get('id', '') or '',
         'copy': body,
         'headline': headline,
         'description': description,
@@ -709,9 +828,510 @@ def merge_daily_series(base_series, extra_series):
     return base_series
 
 
+def fetch_daily_metrics_rows(token, account_id, window):
+    rows = meta_get_paginated(
+        f'{account_id}/insights',
+        {
+            'level': 'ad',
+            'time_range': json.dumps(window),
+            'time_increment': 1,
+            'limit': 500,
+            'fields': DAILY_INSIGHTS_FIELDS_FULL,
+            'use_account_attribution_setting': 'true',
+        },
+        token,
+        limit_pages=80,
+    )
+
+    normalized = []
+    for row in rows:
+        ad_id = row.get('ad_id')
+        date_start = row.get('date_start')
+        if not ad_id or not date_start:
+            continue
+        normalized.append({
+            'adId': ad_id,
+            'adName': row.get('ad_name', '') or '',
+            'dateStart': date_start,
+            'dateStop': row.get('date_stop', '') or date_start,
+            'metrics': normalize_insight(row),
+        })
+    return normalized
+
+
+def build_history_window(windows):
+    starts = [date.fromisoformat(window['since']) for window in windows.values()]
+    ends = [date.fromisoformat(window['until']) for window in windows.values()]
+    return {
+        'since': min(starts).isoformat(),
+        'until': max(ends).isoformat(),
+    }
+
+
+def has_metric_signal(metrics):
+    return any(to_float(metrics.get(field)) > 0 for field in ZERO_METRICS)
+
+
+def aggregate_metrics(ads, range_key):
+    totals = ZERO_METRICS.copy()
+    weighted_impressions = 0.0
+    total_reach = 0.0
+
+    for ad in ads:
+        metrics = ad.get('metrics', {}).get(range_key, ZERO_METRICS.copy())
+        for field in ZERO_METRICS:
+            totals[field] += to_float(metrics.get(field))
+        weighted_impressions += to_float(metrics.get('reach')) * to_float(metrics.get('frequency'))
+        total_reach += to_float(metrics.get('reach'))
+
+    totals['frequency'] = weighted_impressions / total_reach if total_reach else 0.0
+    return with_derived(totals)
+
+
+def percent_change(current_value, previous_value):
+    if not previous_value:
+        return None if current_value else 0.0
+    return ((current_value - previous_value) / previous_value) * 100.0
+
+
+def format_number(value, digits=0):
+    return f'{to_float(value):,.{digits}f}'
+
+
+def format_percent(value, digits=1):
+    return f'{format_number(to_float(value) * 100, digits)}%'
+
+
+def format_delta(value):
+    if value is None:
+        return 'No baseline'
+    sign = '+' if value > 0 else ''
+    return f'{sign}{format_number(value, 1)}%'
+
+
+def compare_key_for_range(range_key):
+    return {
+        '7d': 'wow',
+        '30d': 'mom',
+        'custom': 'customCompare',
+    }.get(range_key, 'wow')
+
+
+def range_display_label(range_key):
+    return {
+        '7d': 'last 7 days',
+        '30d': 'last 30 days',
+        'custom': 'custom range',
+    }.get(range_key, 'current range')
+
+
+def build_recommendations_for_range(ads, range_key):
+    compare_key = compare_key_for_range(range_key)
+    scoped_ads = [
+        ad for ad in ads
+        if has_metric_signal(ad.get('metrics', {}).get(range_key, ZERO_METRICS))
+        or has_metric_signal(ad.get('metrics', {}).get(compare_key, ZERO_METRICS))
+    ]
+    recommendations = []
+
+    for ad in scoped_ads:
+        metrics = with_derived(ad.get('metrics', {}).get(range_key, ZERO_METRICS.copy()))
+        compare = with_derived(ad.get('metrics', {}).get(compare_key, ZERO_METRICS.copy()))
+        sales_delta = percent_change(metrics['sales'], compare['sales'])
+        current_tier = ad.get('tiers', {}).get(range_key) or ad.get('tier', 'Hold')
+
+        if current_tier == 'Repair' or metrics['roas'] < 1.8 or (sales_delta is not None and sales_delta <= -20):
+            recommendations.append({
+                'adId': ad['id'],
+                'priority': 'high',
+                'title': f"Reset the {ad['name']} concept before adding more spend",
+                'body': (
+                    f"This ad is falling below the revenue bar with {format_number(metrics['roas'], 2)}x ROAS "
+                    f"and {format_delta(sales_delta)} sales movement. Refresh the opening angle, tighten the "
+                    'first frame, and cut weaker copy variants before scaling again.'
+                ),
+                'actions': ['Refresh opening 3 seconds', 'Trim weakest copy lines', 'Hold spend until new variant is live'],
+            })
+
+        if metrics['landingRate'] < 0.6 and metrics['outboundClicks'] >= 40:
+            recommendations.append({
+                'adId': ad['id'],
+                'priority': 'high',
+                'title': f"Improve landing-page match for {ad['product']}",
+                'body': (
+                    f"{format_percent(metrics['landingRate'], 1)} of outbound clicks are turning into page visits. "
+                    'Align the promise in the ad with the product page headline and make sure the page above the fold '
+                    'mirrors the hook.'
+                ),
+                'actions': ['Mirror hook in page headline', 'Reduce above-the-fold friction', 'Audit page speed on mobile'],
+            })
+
+        if metrics['videoPlays'] > 0 and metrics['hookRate'] < 0.22:
+            recommendations.append({
+                'adId': ad['id'],
+                'priority': 'medium',
+                'title': f"Strengthen the hook on {ad['name']}",
+                'body': (
+                    'The ad is converting too few impressions into video starts. Test a faster proof point, an '
+                    'on-screen promise in the first second, or a tighter visual cue tied to dry fire accuracy.'
+                ),
+                'actions': ['Open with product benefit', 'Add stronger text overlay', 'Swap in quicker product demo'],
+            })
+
+        if metrics['frequency'] > 2.8 and metrics['reach'] > 10000:
+            recommendations.append({
+                'adId': ad['id'],
+                'priority': 'medium',
+                'title': f"Watch for creative fatigue on {ad['name']}",
+                'body': (
+                    f"Frequency is at {format_number(metrics['frequency'], 2)} in the current window. If click-through "
+                    'softens next, rotate the thumbnail, hook, or headline before audience saturation drags '
+                    'efficiency further.'
+                ),
+                'actions': ['Refresh thumbnail', 'Rotate hook line', 'Test adjacent audience segment'],
+            })
+
+    scale_candidates = sorted(
+        [
+            ad for ad in scoped_ads
+            if with_derived(ad.get('metrics', {}).get(range_key, ZERO_METRICS.copy()))['roas'] >= 3
+            and with_derived(ad.get('metrics', {}).get(range_key, ZERO_METRICS.copy()))['purchases'] >= 8
+        ],
+        key=lambda ad: (
+            with_derived(ad.get('metrics', {}).get(range_key, ZERO_METRICS.copy()))['roas'],
+            with_derived(ad.get('metrics', {}).get(range_key, ZERO_METRICS.copy()))['purchases'],
+        ),
+        reverse=True,
+    )[:2]
+
+    for ad in scale_candidates:
+        metrics = with_derived(ad.get('metrics', {}).get(range_key, ZERO_METRICS.copy()))
+        recommendations.append({
+            'adId': ad['id'],
+            'priority': 'low',
+            'title': f"Lean into {ad['name']}",
+            'body': (
+                f"{ad['name']} is clearing the scale threshold at {format_number(metrics['roas'], 2)}x ROAS with "
+                f"{format_number(metrics['purchases'])} purchases in {range_display_label(range_key)}. "
+                'Consider a measured budget lift or copy extension before duplicating the concept.'
+            ),
+            'actions': ['Increase spend 10-15%', 'Launch sibling copy test', 'Repurpose winning hook into new format'],
+        })
+
+    return recommendations
+
+
+def build_range_summaries(payload_ads, windows):
+    summaries = {}
+    for range_key, window in windows.items():
+        totals = aggregate_metrics(payload_ads, range_key)
+        summaries[range_key] = {
+            'window': window,
+            'spend': round(totals['spend'], 2),
+            'sales': round(totals['sales'], 2),
+            'purchases': round(totals['purchases'], 2),
+            'reach': round(totals['reach'], 2),
+            'clicks': round(totals['clicks'], 2),
+            'frequency': round(totals['frequency'], 4),
+            'outboundClicks': round(totals['outboundClicks'], 2),
+            'landingPageViews': round(totals['landingPageViews'], 2),
+            'interactions': round(totals['interactions'], 2),
+            'videoPlays': round(totals['videoPlays'], 2),
+            'roas': round(totals['roas'], 4),
+            'cpa': round(totals['cpa'], 4),
+            'hookRate': round(totals['hookRate'], 6),
+            'landingRate': round(totals['landingRate'], 6),
+        }
+    return summaries
+
+
+def build_sync_run_record(sync_run_id, payload):
+    payload_ads = payload.get('ads', [])
+    windows = payload.get('periods', {})
+    current_window_counts = {
+        key: sum(1 for ad in payload_ads if has_metric_signal(ad.get('metrics', {}).get(key, ZERO_METRICS)))
+        for key in PRIMARY_RANGE_KEYS
+        if key in windows
+    }
+    return {
+        'id': sync_run_id,
+        'source': payload.get('source', 'meta'),
+        'account_id': (payload.get('account') or {}).get('id', ''),
+        'account_name': (payload.get('account') or {}).get('name', ''),
+        'business_id': ((payload.get('account') or {}).get('business') or {}).get('id', ''),
+        'business_name': ((payload.get('account') or {}).get('business') or {}).get('name', ''),
+        'generated_at': payload.get('generatedAt'),
+        'ads_count': len(payload_ads),
+        'windows': windows,
+        'window_ad_counts': current_window_counts,
+        'range_summaries': build_range_summaries(payload_ads, windows),
+        'sync_status': 'running',
+        'error_message': None,
+    }
+
+
+def trend_points_for_range(ad, range_key):
+    if range_key == '7d':
+        return ad.get('trend7', [])
+    if range_key == '30d':
+        return ad.get('trend30', [])
+    if range_key == 'custom':
+        return ad.get('trendCustomBuckets', [])
+    return []
+
+
+def build_snapshot_rows(sync_run_id, payload_ads, generated_at):
+    rows = []
+    for ad in payload_ads:
+        rows.append({
+            'snapshot_key': f"{sync_run_id}:{ad['id']}",
+            'sync_run_id': sync_run_id,
+            'generated_at': generated_at,
+            'ad_id': ad['id'],
+            'creative_id': ad.get('creativeId', ''),
+            'ad_name': ad.get('name', ''),
+            'campaign_name': ad.get('campaign', ''),
+            'current_status': ad.get('currentStatus', 'UNKNOWN'),
+            'product': ad.get('product', ''),
+            'ad_format': ad.get('format', ''),
+            'tier': ad.get('tier', ''),
+            'quality_score': ad.get('qualityScore', 0),
+            'creative_name': ad.get('creativeName', ''),
+            'headline': ad.get('headline', ''),
+            'primary_text': ad.get('copy', ''),
+            'description': ad.get('description', ''),
+            'hook': ad.get('hook', ''),
+            'landing_page': ad.get('landingPage', ''),
+            'destination_url': ad.get('destinationUrl', ''),
+            'call_to_action': ad.get('callToAction', ''),
+            'media_preview_url': ad.get('mediaPreviewUrl', ''),
+            'media_source_url': ad.get('mediaSourceUrl', ''),
+            'media_permalink_url': ad.get('mediaPermalinkUrl', ''),
+            'media_length_seconds': ad.get('mediaLengthSeconds', 0.0),
+            'video_id': ad.get('videoId', ''),
+            'image_hash': ad.get('imageHash', ''),
+            'body_variants': ad.get('bodyVariants', []),
+            'title_variants': ad.get('titleVariants', []),
+            'description_variants': ad.get('descriptionVariants', []),
+            'link_variants': ad.get('linkVariants', []),
+            'cta_variants': ad.get('ctaVariants', []),
+        })
+    return rows
+
+
+def build_creative_asset_rows(sync_run_id, payload_ads, generated_at):
+    rows = []
+    for ad in payload_ads:
+        rows.append({
+            'asset_key': ad.get('creativeId') or f"ad:{ad['id']}",
+            'creative_id': ad.get('creativeId', ''),
+            'ad_id': ad['id'],
+            'ad_name': ad.get('name', ''),
+            'campaign_name': ad.get('campaign', ''),
+            'creative_name': ad.get('creativeName', ''),
+            'current_status': ad.get('currentStatus', 'UNKNOWN'),
+            'ad_format': ad.get('format', ''),
+            'headline': ad.get('headline', ''),
+            'primary_text': ad.get('copy', ''),
+            'description': ad.get('description', ''),
+            'hook': ad.get('hook', ''),
+            'call_to_action': ad.get('callToAction', ''),
+            'landing_page': ad.get('landingPage', ''),
+            'destination_url': ad.get('destinationUrl', ''),
+            'media_preview_url': ad.get('mediaPreviewUrl', ''),
+            'media_source_url': ad.get('mediaSourceUrl', ''),
+            'media_permalink_url': ad.get('mediaPermalinkUrl', ''),
+            'media_length_seconds': ad.get('mediaLengthSeconds', 0.0),
+            'video_id': ad.get('videoId', ''),
+            'image_hash': ad.get('imageHash', ''),
+            'body_variants': ad.get('bodyVariants', []),
+            'title_variants': ad.get('titleVariants', []),
+            'description_variants': ad.get('descriptionVariants', []),
+            'link_variants': ad.get('linkVariants', []),
+            'cta_variants': ad.get('ctaVariants', []),
+            'last_seen_sync_run_id': sync_run_id,
+            'last_seen_at': generated_at,
+        })
+    return rows
+
+
+def build_window_metric_rows(sync_run_id, payload_ads, windows):
+    rows = []
+    for ad in payload_ads:
+        for range_key, window in windows.items():
+            metrics = with_derived(ad.get('metrics', {}).get(range_key, ZERO_METRICS.copy()))
+            rows.append({
+                'metric_key': f"{sync_run_id}:{ad['id']}:{range_key}",
+                'sync_run_id': sync_run_id,
+                'ad_id': ad['id'],
+                'ad_name': ad.get('name', ''),
+                'campaign_name': ad.get('campaign', ''),
+                'current_status': ad.get('currentStatus', 'UNKNOWN'),
+                'range_key': range_key,
+                'window_since': window['since'],
+                'window_until': window['until'],
+                'spend': round(metrics['spend'], 2),
+                'sales': round(metrics['sales'], 2),
+                'purchases': round(metrics['purchases'], 2),
+                'reach': round(metrics['reach'], 2),
+                'clicks': round(metrics['clicks'], 2),
+                'outbound_clicks': round(metrics['outboundClicks'], 2),
+                'landing_page_views': round(metrics['landingPageViews'], 2),
+                'frequency': round(metrics['frequency'], 6),
+                'interactions': round(metrics['interactions'], 2),
+                'video_plays': round(metrics['videoPlays'], 2),
+                'p25': round(metrics['p25'], 2),
+                'p50': round(metrics['p50'], 2),
+                'p75': round(metrics['p75'], 2),
+                'p95': round(metrics['p95'], 2),
+                'roas': round(metrics['roas'], 6),
+                'cpa': round(metrics['cpa'], 6),
+                'hook_rate': round(metrics['hookRate'], 6),
+                'landing_rate': round(metrics['landingRate'], 6),
+                'quality_score': (ad.get('qualityScores') or {}).get(range_key),
+                'tier': (ad.get('tiers') or {}).get(range_key),
+                'trend_points': trend_points_for_range(ad, range_key),
+                'visited_pages': (ad.get('visitedPagesByRange') or {}).get(range_key, []),
+            })
+    return rows
+
+
+def build_landing_page_visit_rows(sync_run_id, payload_ads):
+    rows = []
+    for ad in payload_ads:
+        for range_key in PRIMARY_RANGE_KEYS:
+            for page in (ad.get('visitedPagesByRange') or {}).get(range_key, []):
+                rows.append({
+                    'visit_key': f"{sync_run_id}:{ad['id']}:{range_key}:{page.get('path', '/')}",
+                    'sync_run_id': sync_run_id,
+                    'ad_id': ad['id'],
+                    'ad_name': ad.get('name', ''),
+                    'campaign_name': ad.get('campaign', ''),
+                    'range_key': range_key,
+                    'page_path': page.get('path', '/'),
+                    'visit_count': int(round(to_float(page.get('visits')))),
+                })
+    return rows
+
+
+def build_daily_metric_records(sync_run_id, daily_metric_rows, ads_by_id):
+    rows = []
+    for row in daily_metric_rows:
+        ad_meta = ads_by_id.get(row['adId'], {})
+        metrics = with_derived(row['metrics'])
+        rows.append({
+            'metric_key': f"{sync_run_id}:{row['adId']}:{row['dateStart']}",
+            'sync_run_id': sync_run_id,
+            'metric_date': row['dateStart'],
+            'metric_date_end': row['dateStop'],
+            'ad_id': row['adId'],
+            'ad_name': row.get('adName') or ad_meta.get('name', ''),
+            'campaign_name': (ad_meta.get('campaign') or {}).get('name', 'Unmapped campaign'),
+            'current_status': ad_meta.get('effective_status', 'UNKNOWN'),
+            'spend': round(metrics['spend'], 2),
+            'sales': round(metrics['sales'], 2),
+            'purchases': round(metrics['purchases'], 2),
+            'reach': round(metrics['reach'], 2),
+            'clicks': round(metrics['clicks'], 2),
+            'outbound_clicks': round(metrics['outboundClicks'], 2),
+            'landing_page_views': round(metrics['landingPageViews'], 2),
+            'frequency': round(metrics['frequency'], 6),
+            'interactions': round(metrics['interactions'], 2),
+            'video_plays': round(metrics['videoPlays'], 2),
+            'p25': round(metrics['p25'], 2),
+            'p50': round(metrics['p50'], 2),
+            'p75': round(metrics['p75'], 2),
+            'p95': round(metrics['p95'], 2),
+            'roas': round(metrics['roas'], 6),
+            'cpa': round(metrics['cpa'], 6),
+            'hook_rate': round(metrics['hookRate'], 6),
+            'landing_rate': round(metrics['landingRate'], 6),
+        })
+    return rows
+
+
+def build_recommendation_rows(sync_run_id, payload_ads, windows, generated_at):
+    rows = []
+    for range_key in PRIMARY_RANGE_KEYS:
+        if range_key not in windows:
+            continue
+        range_recommendations = build_recommendations_for_range(payload_ads, range_key)
+        for index, recommendation in enumerate(range_recommendations):
+            rows.append({
+                'recommendation_key': f"{sync_run_id}:{recommendation['adId']}:{range_key}:{index}",
+                'sync_run_id': sync_run_id,
+                'ad_id': recommendation['adId'],
+                'range_key': range_key,
+                'priority': recommendation['priority'],
+                'title': recommendation['title'],
+                'body': recommendation['body'],
+                'actions': recommendation['actions'],
+                'generated_at': generated_at,
+            })
+    return rows
+
+
+def supabase_update_rows(settings, table, payload, query):
+    supabase_request(settings, 'PATCH', table, payload=payload, query=query, prefer='return=minimal')
+
+
+def persist_dashboard_snapshot(settings, payload, ads_by_id, daily_metric_rows):
+    sync_run_id = str(uuid.uuid4())
+    generated_at = payload.get('generatedAt')
+    payload_ads = payload.get('ads', [])
+    windows = payload.get('periods', {})
+
+    sync_run_record = build_sync_run_record(sync_run_id, payload)
+    sync_run_record['current_window_ads'] = sum(
+        1 for ad in payload_ads if has_metric_signal(ad.get('metrics', {}).get('7d', ZERO_METRICS))
+    )
+
+    supabase_insert_rows(settings, 'meta_sync_runs', [sync_run_record])
+
+    try:
+        supabase_insert_rows(settings, 'ad_snapshots', build_snapshot_rows(sync_run_id, payload_ads, generated_at))
+        supabase_upsert_rows(settings, 'creative_assets', build_creative_asset_rows(sync_run_id, payload_ads, generated_at), 'asset_key')
+        supabase_insert_rows(settings, 'ad_window_metrics', build_window_metric_rows(sync_run_id, payload_ads, windows))
+        supabase_insert_rows(settings, 'landing_page_visits', build_landing_page_visit_rows(sync_run_id, payload_ads))
+        supabase_insert_rows(settings, 'ad_daily_metrics', build_daily_metric_records(sync_run_id, daily_metric_rows, ads_by_id))
+        supabase_insert_rows(settings, 'recommendations', build_recommendation_rows(sync_run_id, payload_ads, windows, generated_at))
+        supabase_update_rows(
+            settings,
+            'meta_sync_runs',
+            {
+                'sync_status': 'completed',
+                'error_message': None,
+            },
+            {'id': f'eq.{sync_run_id}'},
+        )
+    except SupabaseAPIError as exc:
+        try:
+            supabase_update_rows(
+                settings,
+                'meta_sync_runs',
+                {
+                    'sync_status': 'failed',
+                    'error_message': exc.message,
+                },
+                {'id': f'eq.{sync_run_id}'},
+            )
+        except SupabaseAPIError:
+            pass
+        raise
+
+    return sync_run_id
+
+
 def build_dashboard_payload(settings, force_refresh=False, custom_since=None, custom_until=None):
     token = settings['META_ACCESS_TOKEN']
     account_id = settings['META_AD_ACCOUNT_ID']
+    storage_state = {
+        'configured': supabase_configured(settings),
+        'enabled': supabase_sync_enabled(settings),
+        'persisted': False,
+        'syncRunId': '',
+        'error': '',
+    }
 
     if not token or not account_id:
         return {
@@ -719,6 +1339,7 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
             'configured': False,
             'error': 'Missing META_ACCESS_TOKEN or META_AD_ACCOUNT_ID in .env.local.',
             'ads': [],
+            'storage': storage_state,
             'generatedAt': datetime.utcnow().isoformat() + 'Z',
         }
 
@@ -737,9 +1358,12 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
     ads_by_id = {row.get('id'): row for row in ads_rows if row.get('id')}
     insights_by_window = {name: fetch_window_insights(token, account_id, window) for name, window in windows.items()}
     daily_sales_series = fetch_daily_sales_series(token, account_id, windows['30d'])
+    daily_metric_rows = []
     if 'custom' in windows:
         custom_series = fetch_daily_sales_series(token, account_id, windows['custom'])
         daily_sales_series = merge_daily_series(daily_sales_series, custom_series)
+    if storage_state['enabled']:
+        daily_metric_rows = fetch_daily_metrics_rows(token, account_id, build_history_window(windows))
     trend_points = build_trend_points(daily_sales_series, windows)
 
     reported_ad_ids = set()
@@ -786,6 +1410,7 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
             'name': ad.get('name', 'Untitled ad'),
             'campaign': (ad.get('campaign') or {}).get('name') or 'Unmapped campaign',
             'currentStatus': ad.get('effective_status', 'UNKNOWN'),
+            'creativeId': creative_fields['creativeId'],
             'product': infer_product((ad.get('campaign') or {}).get('name', ''), landing_page),
             'format': creative_fields['format'],
             'tier': tiers['7d'],
@@ -834,7 +1459,16 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
         },
         'periods': windows,
         'ads': payload_ads,
+        'storage': storage_state,
     }
+
+    if storage_state['enabled']:
+        try:
+            storage_state['syncRunId'] = persist_dashboard_snapshot(settings, payload, ads_by_id, daily_metric_rows)
+            storage_state['persisted'] = True
+        except SupabaseAPIError as exc:
+            storage_state['error'] = exc.message
+    payload['storage'] = storage_state
 
     CACHE[cache_key] = {'time': time.time(), 'data': payload}
     return payload
