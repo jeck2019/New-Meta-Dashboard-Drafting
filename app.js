@@ -16,6 +16,10 @@ const COMPARE_LABEL = {
   custom: 'vs previous matching period',
 };
 
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const RESUME_REFRESH_THRESHOLD_MS = 60 * 1000;
+const AUTO_REFRESH_COPY = 'Auto-refreshing every 5 minutes while this tab is open.';
+
 const ZERO_METRICS = {
   spend: 0,
   sales: 0,
@@ -397,7 +401,11 @@ const state = {
   contentCollapsed: false,
   viewerOpen: false,
   viewerAdId: null,
+  lastLoadedAt: 0,
 };
+
+let autoRefreshTimer = null;
+let loadPromise = null;
 
 const elements = {
   connectionHeading: document.querySelector('#connection-heading'),
@@ -847,6 +855,57 @@ function currentWindowSummary() {
   return window ? formatWindow(window) : 'No dates selected';
 }
 
+function getAppliedCustomWindow() {
+  const since = state.payload?.periods?.custom?.since;
+  const until = state.payload?.periods?.custom?.until;
+  if (!since || !until) {
+    return null;
+  }
+  return { since, until };
+}
+
+function clearAutoRefreshTimer() {
+  if (autoRefreshTimer) {
+    window.clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+}
+
+function scheduleAutoRefresh() {
+  clearAutoRefreshTimer();
+  if (document.visibilityState === 'hidden') {
+    return;
+  }
+  autoRefreshTimer = window.setTimeout(() => {
+    void triggerAutoRefresh('interval');
+  }, AUTO_REFRESH_INTERVAL_MS);
+}
+
+function shouldRefreshOnResume() {
+  if (!state.lastLoadedAt) {
+    return true;
+  }
+  return Date.now() - state.lastLoadedAt >= RESUME_REFRESH_THRESHOLD_MS;
+}
+
+async function triggerAutoRefresh(reason = 'interval') {
+  if (document.visibilityState === 'hidden') {
+    return;
+  }
+  if (reason !== 'interval' && !shouldRefreshOnResume()) {
+    scheduleAutoRefresh();
+    return;
+  }
+
+  const customWindow = getAppliedCustomWindow();
+  await loadDashboard({
+    customSince: customWindow?.since || '',
+    customUntil: customWindow?.until || '',
+    forceRefresh: true,
+    background: true,
+  });
+}
+
 function ensureCustomDefaults(payload = state.payload) {
   if (payload?.periods?.custom?.since && payload?.periods?.custom?.until) {
     state.customSince = payload.periods.custom.since;
@@ -912,7 +971,7 @@ function renderConnection(visibleAds) {
 
   if (!state.usingMock && payload.source === 'meta') {
     elements.connectionHeading.textContent = 'Live Meta connection confirmed';
-    elements.connectionCopy.textContent = `Reading ad-level reporting directly from ${businessName}.`;
+    elements.connectionCopy.textContent = `Reading ad-level reporting directly from ${businessName}. ${AUTO_REFRESH_COPY}`;
     elements.bannerStatus.textContent = 'Status: live Meta data';
     const currentWindowAds = visibleAds.filter((ad) => hasCurrentWindowActivity(ad)).length;
     elements.bannerSource.textContent = `${currentWindowAds} ads with delivery in ${currentWindowSummary()}`;
@@ -920,8 +979,8 @@ function renderConnection(visibleAds) {
   } else if (payload.configured) {
     elements.connectionHeading.textContent = 'Meta connected, demo view in use';
     elements.connectionCopy.textContent = payload.error
-      ? 'Meta responded with an error, so the dashboard is rendering the demo dataset for now.'
-      : 'The account is connected, but the dashboard is using the demo dataset right now.';
+      ? `Meta responded with an error, so the dashboard is rendering the demo dataset for now. It will retry automatically while the tab stays open.`
+      : 'The account is connected, but the dashboard is using the demo dataset right now. It will retry automatically while the tab stays open.';
     elements.bannerStatus.textContent = 'Status: demo rendering';
     elements.bannerSource.textContent = `Showing demo data for ${currentWindowSummary()}`;
     elements.bannerAccount.textContent = `Last Meta response ${generatedAt}`;
@@ -1649,11 +1708,14 @@ function render() {
   renderViewer();
 }
 
-function buildDashboardUrl(customSince = '', customUntil = '') {
+function buildDashboardUrl(customSince = '', customUntil = '', forceRefresh = false) {
   const params = new URLSearchParams();
   if (customSince && customUntil) {
     params.set('since', customSince);
     params.set('until', customUntil);
+  }
+  if (forceRefresh) {
+    params.set('refresh', '1');
   }
   const query = params.toString();
   return query ? `/api/dashboard?${query}` : '/api/dashboard';
@@ -1678,48 +1740,69 @@ function validateCustomRangeInputs() {
 }
 
 async function loadDashboard(options = {}) {
+  if (loadPromise) {
+    return loadPromise;
+  }
+
   const customSince = options.customSince || '';
   const customUntil = options.customUntil || '';
-  state.isLoading = true;
-  renderFilters();
-  elements.connectionHeading.textContent = 'Loading Meta dashboard';
-  elements.connectionCopy.textContent = 'Reading account data and preparing the dashboard view.';
+  const forceRefresh = Boolean(options.forceRefresh);
+  const background = Boolean(options.background && state.payload);
+
+  loadPromise = (async () => {
+    clearAutoRefreshTimer();
+    state.isLoading = true;
+
+    if (!background) {
+      renderFilters();
+      elements.connectionHeading.textContent = 'Loading Meta dashboard';
+      elements.connectionCopy.textContent = 'Reading account data and preparing the dashboard view.';
+    }
+
+    try {
+      const response = await fetch(buildDashboardUrl(customSince, customUntil, forceRefresh));
+      const payload = await response.json();
+      state.connectionPayload = payload;
+
+      if (response.ok && payload.source === 'meta') {
+        state.usingMock = false;
+        state.payload = normalizePayload(payload);
+      } else {
+        state.usingMock = true;
+        state.payload = createMockPayload(payload.error, customSince && customUntil ? { since: customSince, until: customUntil } : null);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown connection error';
+      state.connectionPayload = {
+        source: 'mock',
+        configured: false,
+        error: message,
+        generatedAt: new Date().toISOString(),
+      };
+      state.usingMock = true;
+      state.payload = createMockPayload(message, customSince && customUntil ? { since: customSince, until: customUntil } : null);
+    } finally {
+      state.isLoading = false;
+      state.lastLoadedAt = Date.now();
+    }
+
+    if (customSince && customUntil) {
+      state.customSince = customSince;
+      state.customUntil = customUntil;
+      state.range = 'custom';
+    } else {
+      ensureCustomDefaults(state.payload);
+    }
+
+    render();
+    scheduleAutoRefresh();
+  })();
 
   try {
-    const response = await fetch(buildDashboardUrl(customSince, customUntil));
-    const payload = await response.json();
-    state.connectionPayload = payload;
-
-    if (response.ok && payload.source === 'meta') {
-      state.usingMock = false;
-      state.payload = normalizePayload(payload);
-    } else {
-      state.usingMock = true;
-      state.payload = createMockPayload(payload.error, customSince && customUntil ? { since: customSince, until: customUntil } : null);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown connection error';
-    state.connectionPayload = {
-      source: 'mock',
-      configured: false,
-      error: message,
-      generatedAt: new Date().toISOString(),
-    };
-    state.usingMock = true;
-    state.payload = createMockPayload(message, customSince && customUntil ? { since: customSince, until: customUntil } : null);
+    await loadPromise;
   } finally {
-    state.isLoading = false;
+    loadPromise = null;
   }
-
-  if (customSince && customUntil) {
-    state.customSince = customSince;
-    state.customUntil = customUntil;
-    state.range = 'custom';
-  } else {
-    ensureCustomDefaults(state.payload);
-  }
-
-  render();
 }
 
 function selectAdFromInteraction(target) {
@@ -1864,7 +1947,21 @@ function bindEvents() {
       }
     });
   });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      clearAutoRefreshTimer();
+      return;
+    }
+    void triggerAutoRefresh('visibility');
+  });
+
+  window.addEventListener('focus', () => {
+    if (document.visibilityState === 'visible') {
+      void triggerAutoRefresh('focus');
+    }
+  });
 }
 
 bindEvents();
-loadDashboard();
+loadDashboard({ forceRefresh: true });

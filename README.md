@@ -26,6 +26,7 @@ python3 server.py
 ## Notes
 
 - When valid Meta credentials are present, the UI loads Meta ad-level insights from `/api/dashboard` and includes ads with delivery in the selected reporting window.
+- The deployed dashboard forces a fresh Meta sync on open, refreshes again every 5 minutes while the tab stays visible, and re-checks when the user returns to the tab.
 - When Supabase is configured and `SUPABASE_ENABLE_SYNC=1`, each fresh Meta sync writes structured history into Supabase. Cached dashboard hits do not create duplicate writes.
 - The dashboard supports the built-in 7-day and 30-day presets plus any exact custom `since` / `until` date range you apply from the UI.
 - The Ad Content tab shows the primary text, headlines, descriptions, CTA metadata, landing pages, and returned creative variants for the ads currently in view.
