@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260417h" />
+    <link rel="stylesheet" href="./styles.css?v=20260417i" />
   </head>
   <body>
     <div class="app-shell">
@@ -31,6 +31,7 @@
           <button class="nav-link is-active" data-page="dashboard" aria-current="page">Dashboard</button>
           <button class="nav-link" data-page="live-ads">Live Ads</button>
           <button class="nav-link" data-page="demographics">Demographics</button>
+          <button class="nav-link" data-page="categories">Categories</button>
           <button class="nav-link" data-page="ad-content">Ad Content</button>
           <button class="nav-link" data-page="details">Details</button>
           <button class="nav-link" data-page="recommendations">Recommendations</button>
@@ -272,6 +273,22 @@
             </section>
           </section>
 
+          <section class="workspace-page" id="page-categories" data-page="categories" hidden>
+            <section class="single-panel-grid">
+              <article class="panel" id="categories-panel">
+                <div class="panel-head panel-head-interactive">
+                  <div>
+                    <p class="panel-kicker">Creative themes</p>
+                    <h3>Ad categories</h3>
+                  </div>
+                  <p class="panel-subtle" id="categories-summary"></p>
+                </div>
+                <div class="categories-overview" id="categories-overview"></div>
+                <div class="categories-grid" id="categories-grid"></div>
+              </article>
+            </section>
+          </section>
+
           <section class="workspace-page" id="page-ad-content" data-page="ad-content" hidden>
             <section class="content-grid">
               <article class="panel" id="content-panel">
@@ -343,6 +360,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260417h"></script>
+    <script src="./app.js?v=20260417i"></script>
   </body>
 </html>

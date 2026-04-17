@@ -19,7 +19,7 @@ const COMPARE_LABEL = {
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const RESUME_REFRESH_THRESHOLD_MS = 60 * 1000;
 const AUTO_REFRESH_COPY = 'Auto-refreshing every 5 minutes while this tab is open.';
-const VALID_PAGES = ['dashboard', 'live-ads', 'demographics', 'ad-content', 'details', 'recommendations'];
+const VALID_PAGES = ['dashboard', 'live-ads', 'demographics', 'categories', 'ad-content', 'details', 'recommendations'];
 const LIVE_AD_SORT_OPTIONS = [
   { value: 'performance', label: 'Performance score' },
   { value: 'spend', label: 'Spend' },
@@ -38,6 +38,55 @@ const DEMOGRAPHIC_DIMENSIONS = ['age', 'gender', 'device', 'country', 'region'];
 const AGE_BUCKET_ORDER = ['13-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+', 'Unknown'];
 const GENDER_BUCKET_ORDER = ['Male', 'Female', 'Other'];
 const DEVICE_BUCKET_ORDER = ['Mobile', 'Desktop', 'Other'];
+const CATEGORY_RULES = [
+  {
+    key: 'home-defense',
+    label: 'Home defense',
+    description: 'Creative centered on protecting the home, family, or personal safety at home.',
+    cues: ['home defense', 'protect your home', 'defend your home', 'family safety', 'protect your family', 'bedside'],
+  },
+  {
+    key: 'savings',
+    label: 'Savings',
+    description: 'Creative built around saving money, range trips, or ammo costs.',
+    cues: ['save money', 'saving money', 'save on ammo', 'ammo bill', 'wasted ammo', 'less wasted ammo', 'range ammo', 'range bill', 'ammo costs'],
+  },
+  {
+    key: 'accuracy-feedback',
+    label: 'Accuracy and feedback',
+    description: 'Creative promising measurable feedback, precision gains, or better shot results.',
+    cues: ['instant feedback', 'shot feedback', 'feedback', 'accuracy', 'precision', 'track progress', 'measurable', 'grouping'],
+  },
+  {
+    key: 'at-home-training',
+    label: 'At-home training',
+    description: 'Creative focused on consistent dry fire reps and training at home.',
+    cues: ['dry fire', 'at home', 'home training', 'train smarter', 'train more often', 'practice at home', 'consistent reps', 'trigger control'],
+  },
+  {
+    key: 'carry-readiness',
+    label: 'Carry readiness',
+    description: 'Creative tied to concealed carry, draw speed, or broader self-defense readiness.',
+    cues: ['concealed carry', 'self defense', 'draw speed', 'carry gun', 'edc', 'carry readiness'],
+  },
+  {
+    key: 'convenience',
+    label: 'Convenience',
+    description: 'Creative highlighting fast setup, easier sessions, or low-friction practice.',
+    cues: ['quick setup', 'easy setup', 'minutes', 'faster', 'fast setup', 'instant', 'easy practice'],
+  },
+  {
+    key: 'bundle-value',
+    label: 'Bundle value',
+    description: 'Creative framed around kits, bundles, or all-in-one value.',
+    cues: ['bundle', 'starter kit', 'kit', 'all-in-one', 'everything you need', 'complete setup'],
+  },
+];
+const CATEGORY_FALLBACK = {
+  key: 'general-training',
+  label: 'General training',
+  description: 'Creative focused on broad dry fire improvement without one dominant theme.',
+};
 const COUNTRY_NAMES =
   typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function'
     ? new Intl.DisplayNames(['en'], { type: 'region' })
@@ -506,6 +555,9 @@ const elements = {
   demographicsDevice: document.querySelector('#demographics-device'),
   demographicsCountry: document.querySelector('#demographics-country'),
   demographicsRegion: document.querySelector('#demographics-region'),
+  categoriesSummary: document.querySelector('#categories-summary'),
+  categoriesOverview: document.querySelector('#categories-overview'),
+  categoriesGrid: document.querySelector('#categories-grid'),
   searchInput: document.querySelector('#search-input'),
   campaignFilter: document.querySelector('#campaign-filter'),
   tierFilter: document.querySelector('#tier-filter'),
@@ -1508,6 +1560,229 @@ function buildResonanceLookup(visibleAds) {
   return lookup;
 }
 
+function average(values) {
+  if (!values.length) {
+    return 0;
+  }
+  return values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length;
+}
+
+function buildCategoryCorpus(ad) {
+  return [ad.name, ad.campaign, ad.product, ad.headline, ad.copy, ad.description, ad.hook, ad.creativeName, ad.landingPage, ad.destinationUrl]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function classifyAdCategory(ad) {
+  const corpus = buildCategoryCorpus(ad);
+  let bestMatch = null;
+
+  CATEGORY_RULES.forEach((rule, index) => {
+    const matchedCues = rule.cues.filter((cue) => corpus.includes(cue));
+    if (!matchedCues.length) {
+      return;
+    }
+
+    const score = matchedCues.reduce((sum, cue) => sum + cue.split(' ').filter(Boolean).length, 0);
+    const candidate = {
+      ...rule,
+      matchedCues,
+      score,
+      index,
+    };
+
+    if (!bestMatch || candidate.score > bestMatch.score || (candidate.score === bestMatch.score && candidate.index < bestMatch.index)) {
+      bestMatch = candidate;
+    }
+  });
+
+  if (bestMatch) {
+    return bestMatch;
+  }
+
+  return {
+    ...CATEGORY_FALLBACK,
+    matchedCues: [ad.product || ad.format || 'training'],
+    score: 0,
+    index: CATEGORY_RULES.length,
+  };
+}
+
+function buildCategoryGroups(visibleAds) {
+  const grouped = new Map();
+
+  visibleAds.forEach((ad) => {
+    const category = classifyAdCategory(ad);
+    const metrics = currentMetricsForRange(ad);
+    const existing =
+      grouped.get(category.key) || {
+        key: category.key,
+        label: category.label,
+        description: category.description,
+        matchedCues: new Set(),
+        totals: {
+          sales: 0,
+          spend: 0,
+        },
+        roasValues: [],
+        cpaValues: [],
+        ads: [],
+      };
+
+    category.matchedCues.forEach((cue) => existing.matchedCues.add(cue));
+    existing.totals.sales += Number(metrics.sales || 0);
+    existing.totals.spend += Number(metrics.spend || 0);
+    existing.roasValues.push(Number(metrics.roas || 0));
+    if (Number(metrics.purchases || 0) > 0) {
+      existing.cpaValues.push(Number(metrics.cpa || 0));
+    }
+    existing.ads.push({
+      id: ad.id,
+      name: ad.name,
+      campaign: ad.campaign,
+      product: ad.product,
+      tier: getCurrentTier(ad),
+      metrics,
+      matchedCues: category.matchedCues,
+    });
+
+    grouped.set(category.key, existing);
+  });
+
+  return [...grouped.values()]
+    .map((group) => ({
+      key: group.key,
+      label: group.label,
+      description: group.description,
+      matchedCues: [...group.matchedCues].slice(0, 4),
+      metrics: {
+        sales: group.totals.sales,
+        spend: group.totals.spend,
+        roas: average(group.roasValues),
+        cpa: average(group.cpaValues),
+        purchasingAds: group.cpaValues.length,
+      },
+      ads: group.ads.sort(
+        (left, right) =>
+          Number(right.metrics.sales || 0) - Number(left.metrics.sales || 0) ||
+          Number(right.metrics.spend || 0) - Number(left.metrics.spend || 0) ||
+          left.name.localeCompare(right.name)
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        right.metrics.sales - left.metrics.sales ||
+        right.metrics.spend - left.metrics.spend ||
+        left.label.localeCompare(right.label)
+    );
+}
+
+function renderCategoryMetric(label, value, note = '') {
+  return `
+    <div class="category-metric">
+      <span class="small-label">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${note ? `<span class="category-metric-note">${escapeHtml(note)}</span>` : ''}
+    </div>
+  `;
+}
+
+function renderCategories(visibleAds) {
+  const groups = buildCategoryGroups(visibleAds);
+  const topSpendGroup = [...groups].sort((left, right) => right.metrics.spend - left.metrics.spend)[0] || null;
+
+  if (elements.categoriesSummary) {
+    elements.categoriesSummary.textContent = `${visibleAds.length} ads categorized • ${groups.length} themes • ${currentWindowSummary()} • themes inferred from live creative and copy`;
+  }
+
+  if (elements.categoriesOverview) {
+    const overviewItems = [
+      { label: 'Themes', value: groups.length ? formatNumber(groups.length) : '0' },
+      { label: 'Ads categorized', value: visibleAds.length ? formatNumber(visibleAds.length) : '0' },
+      { label: 'Top sales theme', value: groups[0]?.label || 'No data' },
+      { label: 'Top spend theme', value: topSpendGroup?.label || 'No data' },
+    ];
+
+    elements.categoriesOverview.innerHTML = overviewItems
+      .map(
+        (item) => `
+          <div class="overview-chip">
+            <span class="overview-chip-label">${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(item.value)}</strong>
+          </div>
+        `
+      )
+      .join('');
+  }
+
+  if (!visibleAds.length) {
+    elements.categoriesGrid.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">No categories yet</p>
+        <h4>No ads match the current filters.</h4>
+        <p>Adjust the search, campaign, tier, or reporting window to rebuild category groupings from the current ad set.</p>
+      </div>
+    `;
+    return;
+  }
+
+  elements.categoriesGrid.innerHTML = groups
+    .map(
+      (group) => `
+        <article class="category-card">
+          <div class="category-card-head">
+            <div>
+              <p class="panel-kicker">Theme category</p>
+              <h4>${escapeHtml(group.label)}</h4>
+              <p class="category-description">${escapeHtml(group.description)}</p>
+            </div>
+            <div class="content-chip-row">
+              <span class="metric-pill">${escapeHtml(formatNumber(group.ads.length))} ads</span>
+              ${group.matchedCues
+                .map((cue) => `<span class="metric-pill metric-pill-accent">${escapeHtml(titleCase(cue))}</span>`)
+                .join('')}
+            </div>
+          </div>
+
+          <div class="category-metrics-grid">
+            ${renderCategoryMetric('Sales', formatCurrency(group.metrics.sales))}
+            ${renderCategoryMetric('Spend', formatCurrency(group.metrics.spend))}
+            ${renderCategoryMetric('Avg ROAS', `${formatNumber(group.metrics.roas, 2)}x`)}
+            ${renderCategoryMetric(
+              'Avg CPA',
+              group.metrics.purchasingAds ? formatCurrency(group.metrics.cpa, 2) : 'No purchases',
+              group.metrics.purchasingAds ? `${formatNumber(group.metrics.purchasingAds)} ads with purchases` : ''
+            )}
+          </div>
+
+          <div class="category-ad-list">
+            ${group.ads
+              .map(
+                (ad) => `
+                  <button type="button" class="category-ad-row ${ad.id === state.selectedAdId ? 'is-selected' : ''}" data-ad-id="${escapeHtml(ad.id)}">
+                    <div class="ad-meta">
+                      <span class="ad-title">${escapeHtml(ad.name)}</span>
+                      <span class="ad-subtitle">${escapeHtml(ad.campaign)} • ${escapeHtml(ad.product)}</span>
+                    </div>
+                    <div class="category-ad-stats">
+                      <span>${escapeHtml(formatCurrency(ad.metrics.sales))} sales</span>
+                      <span>${escapeHtml(formatCurrency(ad.metrics.spend))} spend</span>
+                      <span>${escapeHtml(formatNumber(ad.metrics.roas, 2))}x ROAS</span>
+                    </div>
+                  </button>
+                `
+              )
+              .join('')}
+          </div>
+        </article>
+      `
+    )
+    .join('');
+}
+
 function renderDemographicTable(target, entries, segmentLabel, emptyHeading) {
   if (!target) {
     return;
@@ -2391,6 +2666,7 @@ function render() {
   renderMetrics(visibleAds);
   renderTable(liveAds);
   renderDemographics(visibleAds);
+  renderCategories(visibleAds);
   renderLeaderboards(visibleAds);
   renderContentLibrary(visibleAds);
   renderDetail(selectedAd);
@@ -2643,6 +2919,10 @@ function bindEvents() {
     if (selectAdFromInteraction(event.target)) {
       event.preventDefault();
     }
+  });
+
+  elements.categoriesGrid.addEventListener('click', (event) => {
+    selectAdFromInteraction(event.target);
   });
 
   elements.viewerClose.addEventListener('click', closeViewer);
