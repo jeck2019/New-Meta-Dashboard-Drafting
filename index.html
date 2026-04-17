@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260417s" />
+    <link rel="stylesheet" href="./styles.css?v=20260417t" />
   </head>
   <body>
     <div class="app-shell">
@@ -155,6 +155,29 @@
                     <div id="landing-leaderboard"></div>
                   </section>
                 </div>
+              </article>
+            </section>
+
+            <section class="dashboard-alerts-grid">
+              <article class="panel" id="account-alerts-panel">
+                <div class="panel-head panel-head-interactive">
+                  <div>
+                    <p class="panel-kicker">Account monitoring</p>
+                    <h3>Ad account alerts</h3>
+                  </div>
+                  <p class="panel-subtle" id="account-alerts-summary"></p>
+                </div>
+                <div id="account-alerts-list"></div>
+              </article>
+
+              <article class="panel" id="alert-thresholds-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Alert thresholds</p>
+                    <h3>Account vs ad KPI guardrails</h3>
+                  </div>
+                </div>
+                <div class="alert-thresholds-table" id="alert-thresholds-table"></div>
               </article>
             </section>
           </section>
@@ -373,6 +396,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260417s"></script>
+    <script src="./app.js?v=20260417t"></script>
   </body>
 </html>

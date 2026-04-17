@@ -20,6 +20,7 @@ const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const RESUME_REFRESH_THRESHOLD_MS = 60 * 1000;
 const AUTO_REFRESH_COPY = 'Auto-refreshing every 5 minutes while this tab is open.';
 const VALID_PAGES = ['dashboard', 'live-ads', 'demographics', 'categories', 'ad-content', 'details', 'recommendations'];
+const ALERT_THRESHOLD_STORAGE_KEY = 'strikeman-alert-thresholds-v1';
 const LIVE_AD_SORT_OPTIONS = [
   { value: 'performance', label: 'Performance score' },
   { value: 'spend', label: 'Spend' },
@@ -34,6 +35,16 @@ const LIVE_AD_SORT_OPTIONS = [
   { value: 'hookRate', label: 'Hook rate' },
   { value: 'quality', label: 'Quality score' },
 ];
+const ALERT_METRIC_CONFIG = [
+  { key: 'sales', label: 'Sales', direction: 'up', step: '1', defaultComparator: 'gt' },
+  { key: 'spend', label: 'Spend', direction: 'down', step: '1', defaultComparator: 'lt' },
+  { key: 'cpa', label: 'Cost per purchase', direction: 'down', step: '0.01', defaultComparator: 'lt' },
+  { key: 'roas', label: 'Return on ad spend', direction: 'up', step: '0.01', defaultComparator: 'gt' },
+];
+const ALERT_COMPARATOR_LABELS = {
+  gt: 'Greater than',
+  lt: 'Less than',
+};
 const DEMOGRAPHIC_DIMENSIONS = ['age', 'gender', 'device', 'country', 'region'];
 const AGE_BUCKET_ORDER = ['13-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+', 'Unknown'];
 const GENDER_BUCKET_ORDER = ['Male', 'Female', 'Other'];
@@ -525,6 +536,7 @@ const state = {
   liveAdsSortDirection: 'desc',
   liveAdsStatus: 'All statuses',
   liveAdsFormat: 'All formats',
+  alertThresholds: loadAlertThresholds(),
 };
 
 let autoRefreshTimer = null;
@@ -538,6 +550,9 @@ const elements = {
   bannerStatus: document.querySelector('#banner-status'),
   bannerSource: document.querySelector('#banner-source'),
   bannerAccount: document.querySelector('#banner-account'),
+  accountAlertsSummary: document.querySelector('#account-alerts-summary'),
+  accountAlertsList: document.querySelector('#account-alerts-list'),
+  alertThresholdsTable: document.querySelector('#alert-thresholds-table'),
   dashboardSpotlightSummary: document.querySelector('#dashboard-spotlight-summary'),
   dashboardSpotlightGrid: document.querySelector('#dashboard-spotlight-grid'),
   metricsGrid: document.querySelector('#metrics-grid'),
@@ -589,6 +604,76 @@ const elements = {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function defaultAlertThresholds() {
+  return Object.fromEntries(
+    ALERT_METRIC_CONFIG.map((metric) => [
+      metric.key,
+      {
+        comparator: metric.defaultComparator,
+        value: '',
+      },
+    ])
+  );
+}
+
+function normalizeAlertThresholds(raw = {}) {
+  const defaults = defaultAlertThresholds();
+  const output = {};
+
+  ALERT_METRIC_CONFIG.forEach((metric) => {
+    const current = raw?.[metric.key] || {};
+    output[metric.key] = {
+      comparator: current.comparator === 'lt' ? 'lt' : defaults[metric.key].comparator,
+      value: typeof current.value === 'string' ? current.value : current.value == null ? '' : String(current.value),
+    };
+  });
+
+  return output;
+}
+
+function loadAlertThresholds() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return defaultAlertThresholds();
+  }
+
+  try {
+    const raw = window.localStorage.getItem(ALERT_THRESHOLD_STORAGE_KEY);
+    if (!raw) {
+      return defaultAlertThresholds();
+    }
+    return normalizeAlertThresholds(JSON.parse(raw));
+  } catch (error) {
+    return defaultAlertThresholds();
+  }
+}
+
+function saveAlertThresholds(value = state.alertThresholds) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(ALERT_THRESHOLD_STORAGE_KEY, JSON.stringify(normalizeAlertThresholds(value)));
+  } catch (error) {
+    // Ignore storage write failures and keep the current in-memory thresholds.
+  }
+}
+
+function parseAlertThresholdValue(value) {
+  if (value === '' || value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(parsed, 0);
+}
+
+function getAlertMetricConfig(metricKey) {
+  return ALERT_METRIC_CONFIG.find((metric) => metric.key === metricKey) || ALERT_METRIC_CONFIG[0];
 }
 
 function clamp(value, low, high) {
@@ -982,6 +1067,34 @@ function formatCallToAction(value) {
   return value ? titleCase(value) : 'Not mapped';
 }
 
+function formatAlertMetricValue(metricKey, value) {
+  if (metricKey === 'sales' || metricKey === 'spend') {
+    return formatCurrency(value);
+  }
+  if (metricKey === 'cpa') {
+    return Number.isFinite(value) ? formatCurrency(value, 2) : 'No purchases';
+  }
+  if (metricKey === 'roas') {
+    return `${formatNumber(value, 2)}x`;
+  }
+  return formatNumber(value, 2);
+}
+
+function accountMetricIsWorsening(currentValue, previousValue, direction = 'up') {
+  const delta = percentChange(currentValue, previousValue);
+  if (delta === null || Math.abs(delta) < 0.1) {
+    return false;
+  }
+  return direction === 'down' ? delta > 0 : delta < 0;
+}
+
+function adMetricMeetsThreshold(value, comparator, threshold) {
+  if (threshold === null) {
+    return true;
+  }
+  return comparator === 'lt' ? value < threshold : value > threshold;
+}
+
 function percentChange(currentValue, previousValue) {
   if (!previousValue) {
     return currentValue ? null : 0;
@@ -1144,6 +1257,14 @@ function currentMetricsForRange(ad) {
   return ad.metrics?.[state.range] || withDerived();
 }
 
+function getAlertAdMetricValue(ad, metricKey) {
+  const metrics = currentMetricsForRange(ad);
+  if (metricKey === 'cpa') {
+    return metrics.purchases ? metrics.cpa : Number.POSITIVE_INFINITY;
+  }
+  return Number(metrics?.[metricKey] || 0);
+}
+
 function liveAdsSortLabel() {
   return LIVE_AD_SORT_OPTIONS.find((option) => option.value === state.liveAdsSortMetric)?.label || 'Performance score';
 }
@@ -1213,9 +1334,274 @@ function getDashboardSpotlightAds(visibleAds, limit = 6) {
     .slice(0, limit);
 }
 
+function buildDashboardAlerts(visibleAds) {
+  const currentAccount = aggregateMetrics(visibleAds, state.range);
+  const compareAccount = aggregateMetrics(visibleAds, currentCompareKey());
+  const activeAds = visibleAds.filter((ad) => getCurrentStatus(ad) === 'ACTIVE' && hasCurrentWindowActivity(ad));
+  const candidateAds = activeAds.length ? activeAds : visibleAds.filter((ad) => hasCurrentWindowActivity(ad));
+  const flaggedByAd = new Map();
+
+  const accountSignals = ALERT_METRIC_CONFIG.map((metric) => {
+    const saved = state.alertThresholds?.[metric.key] || {};
+    const thresholdValue = parseAlertThresholdValue(saved.value);
+
+    return {
+      ...metric,
+      currentValue: Number(currentAccount[metric.key] || 0),
+      compareValue: Number(compareAccount[metric.key] || 0),
+      delta: percentChange(currentAccount[metric.key], compareAccount[metric.key]),
+      worsening: accountMetricIsWorsening(currentAccount[metric.key], compareAccount[metric.key], metric.direction),
+      comparator: saved.comparator === 'lt' ? 'lt' : metric.defaultComparator,
+      thresholdValue,
+      hasThreshold: thresholdValue !== null,
+    };
+  });
+
+  accountSignals.forEach((signal) => {
+    if (!signal.worsening || !signal.hasThreshold) {
+      return;
+    }
+
+    candidateAds.forEach((ad) => {
+      const adValue = getAlertAdMetricValue(ad, signal.key);
+      if (adMetricMeetsThreshold(adValue, signal.comparator, signal.thresholdValue)) {
+        return;
+      }
+
+      const existing = flaggedByAd.get(ad.id) || {
+        ad,
+        reasons: [],
+      };
+
+      existing.reasons.push({
+        metricKey: signal.key,
+        label: signal.label,
+        comparator: signal.comparator,
+        thresholdValue: signal.thresholdValue,
+        adValue,
+        delta: signal.delta,
+        direction: signal.direction,
+      });
+
+      flaggedByAd.set(ad.id, existing);
+    });
+  });
+
+  const flaggedAds = [...flaggedByAd.values()].sort((left, right) => {
+    if (left.reasons.length !== right.reasons.length) {
+      return right.reasons.length - left.reasons.length;
+    }
+
+    const rightMetrics = currentMetricsForRange(right.ad);
+    const leftMetrics = currentMetricsForRange(left.ad);
+    return (
+      rightMetrics.spend - leftMetrics.spend ||
+      rightMetrics.sales - leftMetrics.sales ||
+      left.ad.name.localeCompare(right.ad.name)
+    );
+  });
+
+  return {
+    currentAccount,
+    compareAccount,
+    accountSignals,
+    candidateAds,
+    flaggedAds,
+    worseningSignals: accountSignals.filter((signal) => signal.worsening),
+    monitoredSignals: accountSignals.filter((signal) => signal.worsening && signal.hasThreshold),
+    hasAnyThreshold: accountSignals.some((signal) => signal.hasThreshold),
+  };
+}
+
 function currentWindowSummary() {
   const window = getWindow(state.range);
   return window ? formatWindow(window) : 'No dates selected';
+}
+
+function renderAlertThresholdTable(alertModel) {
+  if (!elements.alertThresholdsTable) {
+    return;
+  }
+
+  elements.alertThresholdsTable.innerHTML = `
+    <div class="alert-thresholds-head">
+      <span>Account KPIs</span>
+      <span>Ad KPIs</span>
+    </div>
+    ${ALERT_METRIC_CONFIG.map((metric) => {
+      const signal = alertModel.accountSignals.find((entry) => entry.key === metric.key) || {
+        ...metric,
+        currentValue: 0,
+        delta: 0,
+        comparator: metric.defaultComparator,
+        thresholdValue: null,
+      };
+      const saved = state.alertThresholds?.[metric.key] || {};
+      const thresholdValue = saved.value ?? '';
+      const accountDeltaClass = metricDeltaClass(signal.delta, metric.direction);
+      const currentAccountDisplay =
+        metric.key === 'cpa' && !alertModel.currentAccount.purchases
+          ? 'No purchases'
+          : formatAlertMetricValue(metric.key, signal.currentValue);
+      const watchCopy = signal.hasThreshold
+        ? `Flag ads when ${metric.label.toLowerCase()} is not ${(
+            ALERT_COMPARATOR_LABELS[signal.comparator] || 'Greater than'
+          ).toLowerCase()} ${formatAlertMetricValue(metric.key, signal.thresholdValue)}.`
+        : `Set a manual ad ${metric.label.toLowerCase()} threshold to activate alerts for this KPI.`;
+
+      return `
+        <div class="alert-thresholds-row">
+          <p class="alert-threshold-row-label">${escapeHtml(metric.label)}</p>
+          <div class="alert-thresholds-columns">
+            <div class="alert-threshold-cell alert-threshold-account ${signal.worsening ? 'is-alerting' : ''}">
+              <span class="alert-threshold-label">${escapeHtml(metric.label)}</span>
+              <strong>${escapeHtml(currentAccountDisplay)}</strong>
+              <div class="alert-threshold-foot">
+                <span class="delta ${accountDeltaClass}">${escapeHtml(formatDelta(signal.delta))}</span>
+                <span>${escapeHtml(compareDisplayLabel())}</span>
+              </div>
+            </div>
+            <div class="alert-threshold-cell alert-threshold-manual">
+              <span class="alert-threshold-label">${escapeHtml(metric.label)}</span>
+              <div class="alert-threshold-inputs">
+                <select
+                  class="alert-threshold-select"
+                  data-alert-metric="${escapeHtml(metric.key)}"
+                  data-alert-field="comparator"
+                  aria-label="${escapeHtml(metric.label)} comparator"
+                >
+                  <option value="gt" ${signal.comparator === 'gt' ? 'selected' : ''}>Greater than</option>
+                  <option value="lt" ${signal.comparator === 'lt' ? 'selected' : ''}>Less than</option>
+                </select>
+                <input
+                  class="alert-threshold-input"
+                  data-alert-metric="${escapeHtml(metric.key)}"
+                  data-alert-field="value"
+                  aria-label="${escapeHtml(metric.label)} threshold value"
+                  type="number"
+                  inputmode="decimal"
+                  min="0"
+                  step="${escapeHtml(metric.step)}"
+                  value="${escapeHtml(thresholdValue)}"
+                  placeholder="Enter target"
+                />
+              </div>
+              <p class="alert-threshold-help">${escapeHtml(watchCopy)}</p>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+function renderAccountAlerts(alertModel) {
+  if (!elements.accountAlertsList || !elements.accountAlertsSummary) {
+    return;
+  }
+
+  if (!alertModel.hasAnyThreshold) {
+    elements.accountAlertsSummary.textContent = 'Add manual ad KPI thresholds to activate alerts.';
+    elements.accountAlertsList.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">Thresholds needed</p>
+        <h4>Alerts turn on after you set at least one ad KPI guardrail.</h4>
+        <p>The account KPI column is already live. Once you add an ad threshold, the alert box will flag the ads that miss it while the related account KPI is moving the wrong way.</p>
+      </div>
+    `;
+    return;
+  }
+
+  if (!alertModel.worseningSignals.length) {
+    elements.accountAlertsSummary.textContent = 'No account KPI pressure detected in the current view.';
+    elements.accountAlertsList.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">All clear</p>
+        <h4>The monitored account KPIs are stable or improving right now.</h4>
+        <p>Alerts will appear here when sales or ROAS soften, or when spend or cost per purchase rise against the comparison window.</p>
+      </div>
+    `;
+    return;
+  }
+
+  if (!alertModel.monitoredSignals.length) {
+    elements.accountAlertsSummary.textContent = `${alertModel.worseningSignals.length} account KPI${alertModel.worseningSignals.length === 1 ? '' : 's'} worsened, but no matching ad threshold is set yet.`;
+    elements.accountAlertsList.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">Thresholds missing for active alerts</p>
+        <h4>Account pressure is showing up, but the affected KPI rows do not have ad guardrails yet.</h4>
+        <p>Enter thresholds for the KPI rows marked in the table so the dashboard can identify which ads are dragging the account down.</p>
+      </div>
+    `;
+    return;
+  }
+
+  if (!alertModel.flaggedAds.length) {
+    elements.accountAlertsSummary.textContent = `${alertModel.monitoredSignals.length} monitored KPI${alertModel.monitoredSignals.length === 1 ? '' : 's'} worsened, but no in-view ads breached your thresholds.`;
+    elements.accountAlertsList.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">No flagged ads</p>
+        <h4>The account is under pressure, but the filtered ads currently in view are still inside your manual guardrails.</h4>
+        <p>Adjust the search or filters to inspect a different slice of the account, or tighten the ad KPI thresholds if you want this monitor to trigger earlier.</p>
+      </div>
+    `;
+    return;
+  }
+
+  elements.accountAlertsSummary.textContent = `${alertModel.flaggedAds.length} ad${alertModel.flaggedAds.length === 1 ? '' : 's'} flagged across ${alertModel.monitoredSignals.length} monitored KPI${alertModel.monitoredSignals.length === 1 ? '' : 's'} • ${currentWindowSummary()}`;
+
+  elements.accountAlertsList.innerHTML = `
+    <div class="account-alert-list">
+      ${alertModel.flaggedAds
+        .map(({ ad, reasons }) => {
+          const metrics = currentMetricsForRange(ad);
+          const locationLabel = ad.adsetName ? `${ad.campaign} • ${ad.adsetName}` : ad.campaign;
+          const reasonLabels = reasons.map((reason) => reason.label);
+          const summary = `This ad is under the threshold for ${reasonLabels.join(', ').toLowerCase()} while the account trend is moving the wrong way on the same KPI${reasons.length === 1 ? '' : 's'}.`;
+
+          return `
+            <article class="account-alert-card">
+              <div class="account-alert-head">
+                <div>
+                  <h4>${escapeHtml(ad.name)}</h4>
+                  <p class="account-alert-context">${escapeHtml(locationLabel)} • ${escapeHtml(getCurrentTier(ad))} tier</p>
+                </div>
+                <span class="metric-pill metric-pill-accent">${reasons.length} trigger${reasons.length === 1 ? '' : 's'}</span>
+              </div>
+              <p class="account-alert-copy">${escapeHtml(summary)}</p>
+              <div class="account-alert-metrics">
+                <span class="metric-pill">Sales ${escapeHtml(formatCurrency(metrics.sales))}</span>
+                <span class="metric-pill">Spend ${escapeHtml(formatCurrency(metrics.spend))}</span>
+                <span class="metric-pill">ROAS ${escapeHtml(formatNumber(metrics.roas, 2))}x</span>
+                <span class="metric-pill">CPA ${metrics.purchases ? escapeHtml(formatCurrency(metrics.cpa, 2)) : 'No purchases'}</span>
+              </div>
+              <div class="account-alert-tags">
+                ${reasons
+                  .map((reason) => {
+                    const accountLabel = `Account ${reason.label.toLowerCase()} ${formatDelta(reason.delta)}`;
+                    const adLabel = `${reason.label} ${formatAlertMetricValue(reason.metricKey, reason.adValue)} vs ${(
+                      ALERT_COMPARATOR_LABELS[reason.comparator] || 'Greater than'
+                    ).toLowerCase()} ${formatAlertMetricValue(reason.metricKey, reason.thresholdValue)}`;
+
+                    return `
+                      <span class="account-alert-tag">${escapeHtml(accountLabel)}</span>
+                      <span class="account-alert-tag account-alert-tag-soft">${escapeHtml(adLabel)}</span>
+                    `;
+                  })
+                  .join('')}
+              </div>
+            </article>
+          `;
+        })
+        .join('')}
+    </div>
+  `;
+}
+
+function renderDashboardAlerts(visibleAds) {
+  const alertModel = buildDashboardAlerts(visibleAds);
+  renderAlertThresholdTable(alertModel);
+  renderAccountAlerts(alertModel);
 }
 
 function normalizePage(page) {
@@ -3009,12 +3395,13 @@ function render() {
   renderSelectedAdSelectors(visibleAds, selectedAd);
   renderLiveAdsControls(visibleAds);
   renderConnection(visibleAds);
-  renderDashboardSpotlight(visibleAds);
   renderMetrics(visibleAds);
+  renderDashboardSpotlight(visibleAds);
   renderTable(liveAds);
   renderDemographics(visibleAds);
   renderCategories(visibleAds);
   renderLeaderboards(visibleAds);
+  renderDashboardAlerts(visibleAds);
   renderContentLibrary(visibleAds);
   renderDetail(selectedAd);
   renderRecommendations(visibleAds, selectedAd);
@@ -3218,6 +3605,41 @@ function bindEvents() {
     state.contentCollapsed = !state.contentCollapsed;
     renderContentPanelState();
   });
+
+  if (elements.alertThresholdsTable) {
+    elements.alertThresholdsTable.addEventListener('change', (event) => {
+      const target = event.target;
+      const metricKey = target?.dataset?.alertMetric;
+      const field = target?.dataset?.alertField;
+
+      if (!metricKey || !field) {
+        return;
+      }
+
+      const config = getAlertMetricConfig(metricKey);
+      const current = state.alertThresholds?.[metricKey] || {
+        comparator: config.defaultComparator,
+        value: '',
+      };
+
+      const nextValue =
+        field === 'comparator'
+          ? target.value === 'lt'
+            ? 'lt'
+            : 'gt'
+          : target.value.trim();
+
+      state.alertThresholds = {
+        ...state.alertThresholds,
+        [metricKey]: {
+          ...current,
+          [field]: nextValue,
+        },
+      };
+      saveAlertThresholds();
+      render();
+    });
+  }
 
   const handlePreviewTrigger = (target) => {
     const trigger = target.closest('[data-preview-ad-id]');
