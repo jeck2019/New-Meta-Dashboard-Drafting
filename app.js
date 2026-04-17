@@ -1368,6 +1368,11 @@ function buildDashboardAlerts(visibleAds) {
     ? []
     : candidateAds
         .map((ad) => {
+          const metrics = currentMetricsForRange(ad);
+          if (!metrics.spend && !metrics.sales) {
+            return null;
+          }
+
           const reasons = monitoredSignals
             .map((signal) => {
               const adValue = getAlertAdMetricValue(ad, signal.key);
