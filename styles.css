@@ -981,6 +981,39 @@ select:focus,
   gap: 8px;
 }
 
+.resonance-row {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.resonance-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.resonance-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.resonance-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(214, 111, 61, 0.18);
+  background: rgba(214, 111, 61, 0.1);
+  color: #5b3925;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
 .content-sections,
 .content-variants {
   display: grid;

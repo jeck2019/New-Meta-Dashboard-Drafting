@@ -1425,6 +1425,89 @@ function aggregateDemographicRows(rows, visibleAds, dimension) {
     .sort((left, right) => compareDemographicEntries(dimension, left, right));
 }
 
+function resonanceBucketLabel(dimension, label) {
+  if (dimension === 'gender') {
+    if (label === 'Male') {
+      return 'Male audience';
+    }
+    if (label === 'Female') {
+      return 'Female audience';
+    }
+    return 'Other audience';
+  }
+
+  if (dimension === 'age') {
+    return `Age ${label}`;
+  }
+
+  return label;
+}
+
+function compareResonanceCandidates(left, right) {
+  const leftMetrics = left.metrics || withDerived();
+  const rightMetrics = right.metrics || withDerived();
+
+  if (leftMetrics.sales !== rightMetrics.sales) {
+    return rightMetrics.sales - leftMetrics.sales;
+  }
+  if (leftMetrics.purchases !== rightMetrics.purchases) {
+    return rightMetrics.purchases - leftMetrics.purchases;
+  }
+  if (leftMetrics.roas !== rightMetrics.roas) {
+    return rightMetrics.roas - leftMetrics.roas;
+  }
+  if (leftMetrics.clicks !== rightMetrics.clicks) {
+    return rightMetrics.clicks - leftMetrics.clicks;
+  }
+  if (leftMetrics.reach !== rightMetrics.reach) {
+    return rightMetrics.reach - leftMetrics.reach;
+  }
+  if (leftMetrics.interactions !== rightMetrics.interactions) {
+    return rightMetrics.interactions - leftMetrics.interactions;
+  }
+
+  return left.label.localeCompare(right.label);
+}
+
+function buildResonanceLookup(visibleAds) {
+  const lookup = new Map();
+  const adIds = new Set((visibleAds || []).map((ad) => ad.id));
+  const demographics = currentDemographicsForRange();
+
+  visibleAds.forEach((ad) => {
+    lookup.set(ad.id, { age: null, gender: null });
+  });
+
+  ['age', 'gender'].forEach((dimension) => {
+    const grouped = new Map();
+
+    (demographics[dimension] || []).forEach((row) => {
+      if (!adIds.has(row.adId)) {
+        return;
+      }
+
+      const label = normalizeDemographicBucket(dimension, row.bucket);
+      const normalized = {
+        label,
+        displayLabel: resonanceBucketLabel(dimension, label),
+        metrics: row.metrics || withDerived(),
+      };
+
+      grouped.set(row.adId, [...(grouped.get(row.adId) || []), normalized]);
+    });
+
+    grouped.forEach((rows, adId) => {
+      const preferred = rows.filter((row) => (dimension === 'gender' ? row.label !== 'Other' : row.label !== 'Unknown'));
+      const pool = preferred.length ? preferred : rows;
+      const best = [...pool].sort(compareResonanceCandidates)[0] || null;
+      const current = lookup.get(adId) || {};
+      lookup.set(adId, { ...current, [dimension]: best });
+    });
+  });
+
+  return lookup;
+}
+
 function renderDemographicTable(target, entries, segmentLabel, emptyHeading) {
   if (!target) {
     return;
@@ -1973,11 +2056,20 @@ function renderContentLibrary(visibleAds) {
     return;
   }
 
+  const resonanceLookup = buildResonanceLookup(visibleAds);
   elements.contentLibrary.innerHTML = visibleAds
     .map((ad, index) => {
       const selected = ad.id === state.selectedAdId;
       const metrics = currentMetricsForRange(ad);
       const tier = getCurrentTier(ad);
+      const resonance = resonanceLookup.get(ad.id) || {};
+      const resonancePills = [resonance.age, resonance.gender]
+        .filter(Boolean)
+        .map(
+          (item) =>
+            `<span class="resonance-pill" title="Top-performing demographic segment from Meta reporting in the current window">${escapeHtml(item.displayLabel)}</span>`
+        )
+        .join('');
       const preview = ad.mediaPreviewUrl
         ? `<img src="${escapeHtml(ad.mediaPreviewUrl)}" alt="${escapeHtml(ad.name)} creative preview" loading="lazy" />`
         : `<div class="content-media-fallback">${escapeHtml(ad.format)}</div>`;
@@ -1999,6 +2091,15 @@ function renderContentLibrary(visibleAds) {
                 <span class="metric-pill">${escapeHtml(ad.format)}</span>
                 <span class="metric-pill">${escapeHtml(formatCallToAction(ad.callToAction))}</span>
                 <span class="metric-pill">${escapeHtml(formatNumber(metrics.roas, 2))}x ROAS</span>
+              </div>
+              <div class="resonance-row">
+                <span class="resonance-label">Best resonance</span>
+                <div class="resonance-pills">
+                  ${
+                    resonancePills ||
+                    '<span class="small-note">Age and gender resonance will appear when Meta returns demographic performance rows for this ad.</span>'
+                  }
+                </div>
               </div>
             </div>
           </div>
