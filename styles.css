@@ -320,41 +320,57 @@ select:focus,
 
 .dashboard-spotlight-card {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   padding: 10px;
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.68);
+  box-shadow: 0 18px 36px rgba(32, 24, 17, 0.08);
 }
 
 .dashboard-spotlight-thumb {
   position: relative;
   display: grid;
   place-items: center;
-  height: 148px;
+  height: 340px;
   overflow: hidden;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: rgba(255, 250, 243, 0.96);
 }
 
-.dashboard-spotlight-thumb img {
+.dashboard-spotlight-image {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.dashboard-spotlight-image-blur {
+  object-fit: cover;
+  filter: blur(18px) saturate(0.92);
+  transform: scale(1.08);
+  opacity: 0.4;
+}
+
+.dashboard-spotlight-image-main {
   object-fit: contain;
   object-position: center;
+  padding: 12px;
 }
 
 .dashboard-spotlight-fallback {
   display: grid;
   place-items: center;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  min-height: 148px;
+  min-height: 340px;
   color: #3f332b;
   font-family: 'Instrument Serif', serif;
-  font-size: 1.05rem;
+  font-size: 1.2rem;
   background:
     radial-gradient(circle at top left, rgba(214, 111, 61, 0.18), transparent 35%),
     linear-gradient(180deg, rgba(255, 248, 239, 0.95), rgba(244, 233, 218, 0.84));
@@ -1095,6 +1111,12 @@ select:focus,
   .dashboard-spotlight-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .dashboard-spotlight-thumb,
+  .dashboard-spotlight-fallback {
+    height: 280px;
+    min-height: 280px;
   }
 }
 

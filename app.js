@@ -2068,8 +2068,12 @@ function renderDashboardSpotlight(visibleAds) {
   elements.dashboardSpotlightGrid.innerHTML = spotlightAds
     .map((ad, index) => {
       const metrics = currentMetricsForRange(ad);
+      const tier = getCurrentTier(ad);
       const preview = ad.mediaPreviewUrl
-        ? `<img src="${escapeHtml(ad.mediaPreviewUrl)}" alt="${escapeHtml(ad.name)} thumbnail" loading="lazy" />`
+        ? `
+            <img class="dashboard-spotlight-image dashboard-spotlight-image-blur" src="${escapeHtml(ad.mediaPreviewUrl)}" alt="" loading="lazy" aria-hidden="true" />
+            <img class="dashboard-spotlight-image dashboard-spotlight-image-main" src="${escapeHtml(ad.mediaPreviewUrl)}" alt="${escapeHtml(ad.name)} thumbnail" loading="lazy" />
+          `
         : `<div class="dashboard-spotlight-fallback">${escapeHtml(ad.format || 'Ad')}</div>`;
       const runtimeLabel = formatRuntimeLabel(ad.createdAt);
       const launchLabel = formatShortDate(ad.createdAt);
@@ -2087,7 +2091,7 @@ function renderDashboardSpotlight(visibleAds) {
                 <h4>${escapeHtml(ad.name)}</h4>
                 <p class="dashboard-spotlight-placement">${escapeHtml(placementLabel)}</p>
               </div>
-              <span class="tier-badge tier-${getCurrentTier(ad).toLowerCase()}">${escapeHtml(getCurrentTier(ad))}</span>
+              <span class="tier-badge tier-${tier.toLowerCase()}">${escapeHtml(tier)}</span>
             </div>
 
             <div class="dashboard-spotlight-meta">
