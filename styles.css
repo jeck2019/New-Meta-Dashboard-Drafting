@@ -315,14 +315,14 @@ select:focus,
 .dashboard-spotlight-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 14px;
 }
 
 .dashboard-spotlight-card {
   display: grid;
-  gap: 16px;
-  padding: 16px;
-  border-radius: var(--radius-lg);
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.68);
 }
@@ -331,9 +331,9 @@ select:focus,
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 188px;
+  min-height: 96px;
   overflow: hidden;
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   border: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(23, 33, 43, 0.06), rgba(23, 33, 43, 0.02));
 }
@@ -349,10 +349,10 @@ select:focus,
   place-items: center;
   width: 100%;
   height: 100%;
-  min-height: 188px;
+  min-height: 96px;
   color: #3f332b;
   font-family: 'Instrument Serif', serif;
-  font-size: 1.6rem;
+  font-size: 1.15rem;
   background:
     radial-gradient(circle at top left, rgba(214, 111, 61, 0.18), transparent 35%),
     linear-gradient(180deg, rgba(255, 248, 239, 0.95), rgba(244, 233, 218, 0.84));
@@ -364,11 +364,11 @@ select:focus,
   left: 12px;
   display: inline-flex;
   align-items: center;
-  padding: 7px 10px;
+  padding: 5px 8px;
   border-radius: 999px;
   background: rgba(23, 33, 43, 0.84);
   color: #fff6eb;
-  font-size: 0.76rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -376,7 +376,7 @@ select:focus,
 
 .dashboard-spotlight-body {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .dashboard-spotlight-head {
@@ -387,40 +387,44 @@ select:focus,
 }
 
 .dashboard-spotlight-head h4 {
-  font-size: 1.08rem;
-  line-height: 1.3;
+  font-size: 0.96rem;
+  line-height: 1.25;
 }
 
 .dashboard-spotlight-placement {
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--muted);
-  line-height: 1.5;
-  font-size: 0.92rem;
+  line-height: 1.4;
+  font-size: 0.82rem;
 }
 
 .dashboard-spotlight-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .dashboard-spotlight-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
 }
 
 .dashboard-spotlight-stat {
   display: grid;
-  gap: 8px;
-  padding: 12px;
-  border-radius: var(--radius-md);
+  gap: 6px;
+  padding: 9px;
+  border-radius: 12px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.76);
 }
 
 .dashboard-spotlight-stat strong {
-  font-size: 1rem;
+  font-size: 0.92rem;
+}
+
+.dashboard-spotlight-stat .small-label {
+  font-size: 0.66rem;
 }
 
 .demographics-grid {
