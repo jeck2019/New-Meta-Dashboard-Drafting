@@ -42,6 +42,49 @@ const COUNTRY_NAMES =
   typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function'
     ? new Intl.DisplayNames(['en'], { type: 'region' })
     : null;
+const MOCK_DEMOGRAPHIC_PROFILES = {
+  age: [
+    ['18-24', 0.08],
+    ['25-34', 0.24],
+    ['35-44', 0.27],
+    ['45-54', 0.22],
+    ['55-64', 0.13],
+    ['65+', 0.06],
+  ],
+  gender: [
+    ['male', 0.58],
+    ['female', 0.4],
+    ['unknown', 0.02],
+  ],
+  device: [
+    ['mobile_app', 0.56],
+    ['mobile_web', 0.22],
+    ['desktop', 0.17],
+    ['other', 0.05],
+  ],
+  country: [
+    ['US', 0.78],
+    ['CA', 0.08],
+    ['AU', 0.04],
+    ['GB', 0.04],
+    ['DE', 0.03],
+    ['NZ', 0.03],
+  ],
+  region: [
+    ['California', 0.16],
+    ['Texas', 0.12],
+    ['Florida', 0.1],
+    ['Georgia', 0.08],
+    ['Tennessee', 0.07],
+    ['Pennsylvania', 0.07],
+    ['North Carolina', 0.07],
+    ['Ohio', 0.06],
+    ['Arizona', 0.06],
+    ['Virginia', 0.05],
+    ['Michigan', 0.05],
+    ['Other', 0.11],
+  ],
+};
 
 const ZERO_METRICS = {
   spend: 0,
@@ -665,6 +708,68 @@ function normalizeDemographicsPayload(rawDemographics = {}) {
   return output;
 }
 
+function metricsHaveSignal(metrics = ZERO_METRICS) {
+  return [
+    metrics.spend,
+    metrics.sales,
+    metrics.purchases,
+    metrics.reach,
+    metrics.clicks,
+    metrics.outboundClicks,
+    metrics.landingPageViews,
+    metrics.interactions,
+    metrics.videoPlays,
+  ].some((value) => Number(value || 0) > 0);
+}
+
+function scaleMockMetrics(metrics, share) {
+  const scaled = { ...ZERO_METRICS };
+
+  Object.keys(ZERO_METRICS).forEach((field) => {
+    if (field === 'frequency') {
+      scaled.frequency = Number(metrics.frequency || 0);
+      return;
+    }
+    scaled[field] = Number((Number(metrics[field] || 0) * share).toFixed(4));
+  });
+
+  return scaled;
+}
+
+function buildMockDemographicRows(ads, rangeKey, profile) {
+  const rows = [];
+
+  (ads || []).forEach((ad) => {
+    const metrics = ad.metrics?.[rangeKey] || ZERO_METRICS;
+    if (!metricsHaveSignal(metrics)) {
+      return;
+    }
+
+    profile.forEach(([bucket, share]) => {
+      rows.push({
+        adId: ad.id,
+        bucket,
+        metrics: scaleMockMetrics(metrics, share),
+      });
+    });
+  });
+
+  return rows;
+}
+
+function buildMockDemographics(ads, includeCustom = false) {
+  const demographics = blankDemographics();
+  const rangeKeys = ['7d', '30d', ...(includeCustom ? ['custom'] : [])];
+
+  rangeKeys.forEach((rangeKey) => {
+    Object.entries(MOCK_DEMOGRAPHIC_PROFILES).forEach(([dimension, profile]) => {
+      demographics[rangeKey][dimension] = buildMockDemographicRows(ads, rangeKey, profile);
+    });
+  });
+
+  return demographics;
+}
+
 function normalizePayload(payload) {
   return {
     ...payload,
@@ -694,7 +799,7 @@ function createMockPayload(errorMessage, customWindow = null) {
   const payload = clone(MOCK_PAYLOAD);
   payload.generatedAt = new Date().toISOString();
   payload.error = errorMessage || '';
-  payload.demographics = blankDemographics();
+  payload.demographics = buildMockDemographics(payload.ads, Boolean(customWindow));
 
   if (customWindow?.since && customWindow?.until) {
     payload.periods.custom = customWindow;
@@ -717,6 +822,8 @@ function createMockPayload(errorMessage, customWindow = null) {
         custom: ad.visitedPages || [],
       },
     }));
+
+    payload.demographics = buildMockDemographics(payload.ads, true);
   }
 
   return normalizePayload(payload);
@@ -1387,9 +1494,10 @@ function renderDemographics(visibleAds) {
   const deviceEntries = aggregateDemographicRows(demographics.device, visibleAds, 'device');
   const countryEntries = aggregateDemographicRows(demographics.country, visibleAds, 'country');
   const regionEntries = aggregateDemographicRows(demographics.region, visibleAds, 'region');
+  const sourceLabel = state.usingMock ? 'modeled from demo ad data' : 'sourced from Meta Insights breakdowns';
 
   if (elements.demographicsSummary) {
-    elements.demographicsSummary.textContent = `${visibleAds.length} filtered ads • ${currentWindowSummary()} • sourced from Meta Insights breakdowns`;
+    elements.demographicsSummary.textContent = `${visibleAds.length} filtered ads • ${currentWindowSummary()} • ${sourceLabel}`;
   }
 
   if (elements.demographicsOverview) {
