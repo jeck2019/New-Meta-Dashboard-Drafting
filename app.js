@@ -616,6 +616,10 @@ function defaultAlertThresholds() {
   );
 }
 
+function normalizeAlertComparator(value, fallback = 'gt') {
+  return value === 'gt' || value === 'lt' ? value : fallback;
+}
+
 function normalizeAlertThresholds(raw = {}) {
   const defaults = defaultAlertThresholds();
   const output = {};
@@ -623,7 +627,7 @@ function normalizeAlertThresholds(raw = {}) {
   ALERT_METRIC_CONFIG.forEach((metric) => {
     const current = raw?.[metric.key] || {};
     output[metric.key] = {
-      comparator: current.comparator === 'lt' ? 'lt' : defaults[metric.key].comparator,
+      comparator: normalizeAlertComparator(current.comparator, defaults[metric.key].comparator),
       value: typeof current.value === 'string' ? current.value : current.value == null ? '' : String(current.value),
     };
   });
@@ -1349,7 +1353,7 @@ function buildDashboardAlerts(visibleAds) {
       compareValue: Number(compareAccount[metric.key] || 0),
       delta: percentChange(currentAccount[metric.key], compareAccount[metric.key]),
       worsening: accountMetricIsWorsening(currentAccount[metric.key], compareAccount[metric.key], metric.direction),
-      comparator: saved.comparator === 'lt' ? 'lt' : metric.defaultComparator,
+      comparator: normalizeAlertComparator(saved.comparator, metric.defaultComparator),
       thresholdValue,
       hasThreshold: thresholdValue !== null,
     };
