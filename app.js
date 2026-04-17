@@ -1341,7 +1341,6 @@ function buildDashboardAlerts(visibleAds) {
   const compareAccount = aggregateMetrics(visibleAds, currentCompareKey());
   const activeAds = visibleAds.filter((ad) => getCurrentStatus(ad) === 'ACTIVE' && hasCurrentWindowActivity(ad));
   const candidateAds = activeAds.length ? activeAds : visibleAds.filter((ad) => hasCurrentWindowActivity(ad));
-  const flaggedByAd = new Map();
 
   const accountSignals = ALERT_METRIC_CONFIG.map((metric) => {
     const saved = state.alertThresholds?.[metric.key] || {};
@@ -1359,37 +1358,43 @@ function buildDashboardAlerts(visibleAds) {
     };
   });
 
-  accountSignals.forEach((signal) => {
-    if (!signal.worsening || !signal.hasThreshold) {
-      return;
-    }
+  const thresholdSignals = accountSignals.filter((signal) => signal.hasThreshold);
+  const monitoredSignals = accountSignals.filter((signal) => signal.worsening && signal.hasThreshold);
+  const requiresSignalCount = ALERT_METRIC_CONFIG.length;
+  const allThresholdsReady = thresholdSignals.length === requiresSignalCount;
+  const allGuardrailsTriggered = monitoredSignals.length === requiresSignalCount;
 
-    candidateAds.forEach((ad) => {
-      const adValue = getAlertAdMetricValue(ad, signal.key);
-      if (!adMetricMeetsThreshold(adValue, signal.comparator, signal.thresholdValue)) {
-        return;
-      }
+  const flaggedAds = (!allThresholdsReady || !allGuardrailsTriggered
+    ? []
+    : candidateAds
+        .map((ad) => {
+          const reasons = monitoredSignals
+            .map((signal) => {
+              const adValue = getAlertAdMetricValue(ad, signal.key);
+              if (!adMetricMeetsThreshold(adValue, signal.comparator, signal.thresholdValue)) {
+                return null;
+              }
 
-      const existing = flaggedByAd.get(ad.id) || {
-        ad,
-        reasons: [],
-      };
+              return {
+                metricKey: signal.key,
+                label: signal.label,
+                comparator: signal.comparator,
+                thresholdValue: signal.thresholdValue,
+                adValue,
+                delta: signal.delta,
+                direction: signal.direction,
+              };
+            })
+            .filter(Boolean);
 
-      existing.reasons.push({
-        metricKey: signal.key,
-        label: signal.label,
-        comparator: signal.comparator,
-        thresholdValue: signal.thresholdValue,
-        adValue,
-        delta: signal.delta,
-        direction: signal.direction,
-      });
+          if (reasons.length !== requiresSignalCount) {
+            return null;
+          }
 
-      flaggedByAd.set(ad.id, existing);
-    });
-  });
-
-  const flaggedAds = [...flaggedByAd.values()].sort((left, right) => {
+          return { ad, reasons };
+        })
+        .filter(Boolean)
+  ).sort((left, right) => {
     if (left.reasons.length !== right.reasons.length) {
       return right.reasons.length - left.reasons.length;
     }
@@ -1410,8 +1415,11 @@ function buildDashboardAlerts(visibleAds) {
     candidateAds,
     flaggedAds,
     worseningSignals: accountSignals.filter((signal) => signal.worsening),
-    monitoredSignals: accountSignals.filter((signal) => signal.worsening && signal.hasThreshold),
+    monitoredSignals,
+    thresholdSignals,
     hasAnyThreshold: accountSignals.some((signal) => signal.hasThreshold),
+    allThresholdsReady,
+    allGuardrailsTriggered,
   };
 }
 
@@ -1507,8 +1515,20 @@ function renderAccountAlerts(alertModel) {
     elements.accountAlertsList.innerHTML = `
       <div class="empty-state">
         <p class="empty-kicker">Thresholds needed</p>
-        <h4>Alerts turn on after you set at least one ad KPI guardrail.</h4>
-        <p>The account KPI column is already live. Once you add an ad threshold, the alert box will flag the ads that miss it while the related account KPI is moving the wrong way.</p>
+        <h4>Alerts turn on after you set both ad KPI guardrails.</h4>
+        <p>The account KPI column is already live. Once both CPA and ROAS thresholds are entered, the alert box will only flag ads that satisfy both guardrails while the account is under pressure.</p>
+      </div>
+    `;
+    return;
+  }
+
+  if (!alertModel.allThresholdsReady) {
+    elements.accountAlertsSummary.textContent = 'Both guardrails must be filled in before ads can be flagged.';
+    elements.accountAlertsList.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">Complete both guardrails</p>
+        <h4>Enter both CPA and ROAS targets to arm the alert monitor.</h4>
+        <p>The dashboard now requires both guardrails together, so a single threshold is not enough to flag ads.</p>
       </div>
     `;
     return;
@@ -1526,31 +1546,31 @@ function renderAccountAlerts(alertModel) {
     return;
   }
 
-  if (!alertModel.monitoredSignals.length) {
-    elements.accountAlertsSummary.textContent = `${alertModel.worseningSignals.length} account KPI${alertModel.worseningSignals.length === 1 ? '' : 's'} worsened, but no matching ad threshold is set yet.`;
+  if (!alertModel.allGuardrailsTriggered) {
+    elements.accountAlertsSummary.textContent = 'Both account guardrails are not active together yet.';
     elements.accountAlertsList.innerHTML = `
       <div class="empty-state">
-        <p class="empty-kicker">Thresholds missing for active alerts</p>
-        <h4>Account pressure is showing up, but the affected KPI rows do not have ad guardrails yet.</h4>
-        <p>Enter thresholds for the KPI rows marked in the table so the dashboard can identify which ads are dragging the account down.</p>
+        <p class="empty-kicker">Waiting for both guardrails</p>
+        <h4>The alert monitor now waits for both CPA and ROAS account conditions to be active together.</h4>
+        <p>Even if one KPI is under pressure, ads will not be flagged until both monitored account guardrails are triggered at the same time.</p>
       </div>
     `;
     return;
   }
 
   if (!alertModel.flaggedAds.length) {
-    elements.accountAlertsSummary.textContent = `${alertModel.monitoredSignals.length} monitored KPI${alertModel.monitoredSignals.length === 1 ? '' : 's'} worsened, but no in-view ads breached your thresholds.`;
+    elements.accountAlertsSummary.textContent = 'Both account guardrails are active, but no in-view ads match both thresholds.';
     elements.accountAlertsList.innerHTML = `
       <div class="empty-state">
         <p class="empty-kicker">No flagged ads</p>
-        <h4>The account is under pressure, but no filtered ads currently match the alert conditions you set.</h4>
-        <p>Adjust the search or filters to inspect a different slice of the account, or relax the ad KPI thresholds if you want this monitor to trigger more often.</p>
+        <h4>The account is under pressure, but no filtered ads currently satisfy both alert conditions at once.</h4>
+        <p>Adjust the search or filters to inspect a different slice of the account, or relax one of the guardrails if you want this monitor to trigger more often.</p>
       </div>
     `;
     return;
   }
 
-  elements.accountAlertsSummary.textContent = `${alertModel.flaggedAds.length} ad${alertModel.flaggedAds.length === 1 ? '' : 's'} flagged across ${alertModel.monitoredSignals.length} monitored KPI${alertModel.monitoredSignals.length === 1 ? '' : 's'} • ${currentWindowSummary()}`;
+  elements.accountAlertsSummary.textContent = `${alertModel.flaggedAds.length} ad${alertModel.flaggedAds.length === 1 ? '' : 's'} flagged by both guardrails • ${currentWindowSummary()}`;
 
   elements.accountAlertsList.innerHTML = `
     <div class="account-alert-list">
@@ -1559,7 +1579,7 @@ function renderAccountAlerts(alertModel) {
           const metrics = currentMetricsForRange(ad);
           const locationLabel = ad.adsetName ? `${ad.campaign} • ${ad.adsetName}` : ad.campaign;
           const reasonLabels = reasons.map((reason) => reason.label);
-          const summary = `This ad matches the alert condition for ${reasonLabels.join(', ').toLowerCase()} while the account trend is moving the wrong way on the same KPI${reasons.length === 1 ? '' : 's'}.`;
+          const summary = `This ad satisfies both guardrails at the same time: ${reasonLabels.join(' and ').toLowerCase()}.`;
 
           return `
             <article class="account-alert-card">
