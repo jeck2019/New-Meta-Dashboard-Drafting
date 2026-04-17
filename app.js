@@ -36,8 +36,6 @@ const LIVE_AD_SORT_OPTIONS = [
   { value: 'quality', label: 'Quality score' },
 ];
 const ALERT_METRIC_CONFIG = [
-  { key: 'sales', label: 'Sales', direction: 'up', step: '1', defaultComparator: 'gt' },
-  { key: 'spend', label: 'Spend', direction: 'down', step: '1', defaultComparator: 'lt' },
   { key: 'cpa', label: 'Cost per purchase', direction: 'down', step: '0.01', defaultComparator: 'lt' },
   { key: 'roas', label: 'Return on ad spend', direction: 'up', step: '0.01', defaultComparator: 'gt' },
 ];
@@ -1518,7 +1516,7 @@ function renderAccountAlerts(alertModel) {
       <div class="empty-state">
         <p class="empty-kicker">All clear</p>
         <h4>The monitored account KPIs are stable or improving right now.</h4>
-        <p>Alerts will appear here when sales or ROAS soften, or when spend or cost per purchase rise against the comparison window.</p>
+        <p>Alerts will appear here when return on ad spend softens or when cost per purchase rises against the comparison window.</p>
       </div>
     `;
     return;

@@ -587,6 +587,15 @@ select:focus,
   width: 100%;
 }
 
+.alert-threshold-select {
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  appearance: auto;
+  -webkit-appearance: menulist;
+  background-image: none;
+}
+
 .alert-threshold-help {
   font-size: 0.84rem;
 }
