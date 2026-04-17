@@ -1366,7 +1366,7 @@ function buildDashboardAlerts(visibleAds) {
 
     candidateAds.forEach((ad) => {
       const adValue = getAlertAdMetricValue(ad, signal.key);
-      if (adMetricMeetsThreshold(adValue, signal.comparator, signal.thresholdValue)) {
+      if (!adMetricMeetsThreshold(adValue, signal.comparator, signal.thresholdValue)) {
         return;
       }
 
@@ -1446,7 +1446,7 @@ function renderAlertThresholdTable(alertModel) {
           ? 'No purchases'
           : formatAlertMetricValue(metric.key, signal.currentValue);
       const watchCopy = signal.hasThreshold
-        ? `Flag ads when ${metric.label.toLowerCase()} is not ${(
+        ? `Flag ads when ${metric.label.toLowerCase()} is ${(
             ALERT_COMPARATOR_LABELS[signal.comparator] || 'Greater than'
           ).toLowerCase()} ${formatAlertMetricValue(metric.key, signal.thresholdValue)}.`
         : `Set a manual ad ${metric.label.toLowerCase()} threshold to activate alerts for this KPI.`;
@@ -1543,8 +1543,8 @@ function renderAccountAlerts(alertModel) {
     elements.accountAlertsList.innerHTML = `
       <div class="empty-state">
         <p class="empty-kicker">No flagged ads</p>
-        <h4>The account is under pressure, but the filtered ads currently in view are still inside your manual guardrails.</h4>
-        <p>Adjust the search or filters to inspect a different slice of the account, or tighten the ad KPI thresholds if you want this monitor to trigger earlier.</p>
+        <h4>The account is under pressure, but no filtered ads currently match the alert conditions you set.</h4>
+        <p>Adjust the search or filters to inspect a different slice of the account, or relax the ad KPI thresholds if you want this monitor to trigger more often.</p>
       </div>
     `;
     return;
@@ -1559,7 +1559,7 @@ function renderAccountAlerts(alertModel) {
           const metrics = currentMetricsForRange(ad);
           const locationLabel = ad.adsetName ? `${ad.campaign} • ${ad.adsetName}` : ad.campaign;
           const reasonLabels = reasons.map((reason) => reason.label);
-          const summary = `This ad is under the threshold for ${reasonLabels.join(', ').toLowerCase()} while the account trend is moving the wrong way on the same KPI${reasons.length === 1 ? '' : 's'}.`;
+          const summary = `This ad matches the alert condition for ${reasonLabels.join(', ').toLowerCase()} while the account trend is moving the wrong way on the same KPI${reasons.length === 1 ? '' : 's'}.`;
 
           return `
             <article class="account-alert-card">
@@ -1581,7 +1581,7 @@ function renderAccountAlerts(alertModel) {
                 ${reasons
                   .map((reason) => {
                     const accountLabel = `Account ${reason.label.toLowerCase()} ${formatDelta(reason.delta)}`;
-                    const adLabel = `${reason.label} ${formatAlertMetricValue(reason.metricKey, reason.adValue)} vs ${(
+                    const adLabel = `${reason.label} ${formatAlertMetricValue(reason.metricKey, reason.adValue)} • ${(
                       ALERT_COMPARATOR_LABELS[reason.comparator] || 'Greater than'
                     ).toLowerCase()} ${formatAlertMetricValue(reason.metricKey, reason.thresholdValue)}`;
 
