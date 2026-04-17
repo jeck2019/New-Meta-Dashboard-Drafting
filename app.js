@@ -19,6 +19,7 @@ const COMPARE_LABEL = {
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const RESUME_REFRESH_THRESHOLD_MS = 60 * 1000;
 const AUTO_REFRESH_COPY = 'Auto-refreshing every 5 minutes while this tab is open.';
+const VALID_PAGES = ['dashboard', 'live-ads', 'ad-content', 'details', 'recommendations'];
 
 const ZERO_METRICS = {
   spend: 0,
@@ -402,6 +403,7 @@ const state = {
   viewerOpen: false,
   viewerAdId: null,
   lastLoadedAt: 0,
+  page: 'dashboard',
 };
 
 let autoRefreshTimer = null;
@@ -443,6 +445,7 @@ const elements = {
   viewerClose: document.querySelector('#viewer-close'),
   rangeButtons: Array.from(document.querySelectorAll('#range-toggle button')),
   navLinks: Array.from(document.querySelectorAll('.nav-link')),
+  workspacePages: Array.from(document.querySelectorAll('.workspace-page')),
 };
 
 function clone(value) {
@@ -853,6 +856,53 @@ function currentMetricsForRange(ad) {
 function currentWindowSummary() {
   const window = getWindow(state.range);
   return window ? formatWindow(window) : 'No dates selected';
+}
+
+function normalizePage(page) {
+  return VALID_PAGES.includes(page) ? page : 'dashboard';
+}
+
+function getPageFromHash() {
+  return normalizePage(window.location.hash.replace(/^#/, '').trim());
+}
+
+function updatePageHash(page) {
+  const nextHash = `#${page}`;
+  if (window.location.hash === nextHash) {
+    return;
+  }
+  history.replaceState(null, '', nextHash);
+}
+
+function renderPageState() {
+  elements.navLinks.forEach((link) => {
+    const isActive = link.dataset.page === state.page;
+    link.classList.toggle('is-active', isActive);
+    if (isActive) {
+      link.setAttribute('aria-current', 'page');
+    } else {
+      link.removeAttribute('aria-current');
+    }
+  });
+
+  elements.workspacePages.forEach((page) => {
+    const isActive = page.dataset.page === state.page;
+    page.classList.toggle('is-active', isActive);
+    page.hidden = !isActive;
+  });
+}
+
+function setPage(page, options = {}) {
+  state.page = normalizePage(page);
+  renderPageState();
+
+  if (options.updateHash) {
+    updatePageHash(state.page);
+  }
+
+  if (options.scroll) {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 }
 
 function getAppliedCustomWindow() {
@@ -1694,6 +1744,7 @@ function render() {
     return;
   }
 
+  renderPageState();
   renderFilters();
   const visibleAds = getVisibleAds();
   const selectedAd = ensureSelectedAd(visibleAds);
@@ -1939,12 +1990,7 @@ function bindEvents() {
 
   elements.navLinks.forEach((link) => {
     link.addEventListener('click', () => {
-      elements.navLinks.forEach((item) => item.classList.remove('is-active'));
-      link.classList.add('is-active');
-      const target = document.getElementById(link.dataset.target);
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+      setPage(link.dataset.page, { updateHash: true, scroll: true });
     });
   });
 
@@ -1961,7 +2007,12 @@ function bindEvents() {
       void triggerAutoRefresh('focus');
     }
   });
+
+  window.addEventListener('hashchange', () => {
+    setPage(getPageFromHash(), { scroll: true });
+  });
 }
 
 bindEvents();
+setPage(getPageFromHash());
 loadDashboard({ forceRefresh: true });

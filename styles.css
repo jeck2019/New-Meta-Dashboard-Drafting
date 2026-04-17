@@ -292,6 +292,26 @@ select:focus,
   margin-top: 22px;
 }
 
+.workspace-pages {
+  margin-top: 22px;
+}
+
+.workspace-page {
+  display: none;
+  gap: 22px;
+  align-content: start;
+}
+
+.workspace-page.is-active {
+  display: grid;
+}
+
+.dashboard-grid,
+.single-panel-grid {
+  display: grid;
+  gap: 18px;
+}
+
 .banner-pill {
   padding: 12px 16px;
   border-radius: 999px;
@@ -794,6 +814,15 @@ select:focus,
 
 .content-grid {
   margin-top: 22px;
+}
+
+.workspace-page .metrics-grid,
+.workspace-page .layout-grid,
+.workspace-page .detail-grid,
+.workspace-page .content-grid,
+.workspace-page .dashboard-grid,
+.workspace-page .single-panel-grid {
+  margin-top: 0;
 }
 
 .content-library {

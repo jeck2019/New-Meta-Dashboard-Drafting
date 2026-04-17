@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260416a" />
+    <link rel="stylesheet" href="./styles.css?v=20260417b" />
   </head>
   <body>
     <div class="app-shell">
@@ -28,11 +28,11 @@
         </div>
 
         <nav class="nav-links">
-          <button class="nav-link is-active" data-target="dashboard">Dashboard</button>
-          <button class="nav-link" data-target="ads-panel">Live Ads</button>
-          <button class="nav-link" data-target="content-panel">Ad Content</button>
-          <button class="nav-link" data-target="detail-panel">Detail</button>
-          <button class="nav-link" data-target="recommendations-panel">Recommendations</button>
+          <button class="nav-link is-active" data-page="dashboard" aria-current="page">Dashboard</button>
+          <button class="nav-link" data-page="live-ads">Live Ads</button>
+          <button class="nav-link" data-page="ad-content">Ad Content</button>
+          <button class="nav-link" data-page="details">Details</button>
+          <button class="nav-link" data-page="recommendations">Recommendations</button>
         </nav>
 
         <section class="sidebar-card">
@@ -48,7 +48,7 @@
         </section>
       </aside>
 
-      <main class="workspace" id="dashboard">
+      <main class="workspace">
         <header class="hero-panel">
           <div class="hero-copy">
             <p class="kicker">Dry fire creative intelligence</p>
@@ -105,114 +105,128 @@
           <div class="banner-pill" id="banner-account">Waiting for account data</div>
         </section>
 
-        <section class="metrics-grid" id="metrics-grid"></section>
+        <div class="workspace-pages">
+          <section class="workspace-page is-active" id="page-dashboard" data-page="dashboard">
+            <section class="metrics-grid" id="metrics-grid"></section>
 
-        <section class="layout-grid">
-          <article class="panel panel-table" id="ads-panel">
-            <div class="panel-head panel-head-interactive">
-              <div>
-                <p class="panel-kicker">Ad rankings</p>
-                <h3>Performance board</h3>
-              </div>
-              <div class="panel-head-actions">
-                <p class="panel-subtle" id="table-summary"></p>
-                <button id="ads-collapse-toggle" type="button" class="panel-toggle">Collapse</button>
-              </div>
-            </div>
-            <div class="table-shell" id="ads-panel-body">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Ad</th>
-                    <th>Spend</th>
-                    <th>Sales</th>
-                    <th>ROAS</th>
-                    <th>CPA</th>
-                    <th>Reach</th>
-                    <th>Clicks</th>
-                    <th>Freq.</th>
-                    <th>Orders</th>
-                    <th>Tier</th>
-                    <th>Preview</th>
-                  </tr>
-                </thead>
-                <tbody id="ads-tbody"></tbody>
-              </table>
-            </div>
-          </article>
-
-          <aside class="stack">
-            <article class="panel" id="leaderboard-panel">
-              <div class="panel-head">
-                <div>
-                  <p class="panel-kicker">Creative signals</p>
-                  <h3>What is winning now</h3>
+            <section class="dashboard-grid">
+              <article class="panel" id="leaderboard-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Creative signals</p>
+                    <h3>What is winning now</h3>
+                  </div>
                 </div>
-              </div>
-              <div class="leaderboard-stack">
-                <section class="leaderboard-card">
-                  <div class="leaderboard-head">
-                    <h4>Top copy</h4>
-                    <span>ROAS-weighted</span>
-                  </div>
-                  <div id="copy-leaderboard"></div>
-                </section>
-                <section class="leaderboard-card">
-                  <div class="leaderboard-head">
-                    <h4>Best hooks</h4>
-                    <span>Video start efficiency</span>
-                  </div>
-                  <div id="hook-leaderboard"></div>
-                </section>
-                <section class="leaderboard-card">
-                  <div class="leaderboard-head">
-                    <h4>Landing pages</h4>
-                    <span>Visited from ads</span>
-                  </div>
-                  <div id="landing-leaderboard"></div>
-                </section>
-              </div>
-            </article>
-          </aside>
-        </section>
+                <div class="leaderboard-stack">
+                  <section class="leaderboard-card">
+                    <div class="leaderboard-head">
+                      <h4>Top copy</h4>
+                      <span>ROAS-weighted</span>
+                    </div>
+                    <div id="copy-leaderboard"></div>
+                  </section>
+                  <section class="leaderboard-card">
+                    <div class="leaderboard-head">
+                      <h4>Best hooks</h4>
+                      <span>Video start efficiency</span>
+                    </div>
+                    <div id="hook-leaderboard"></div>
+                  </section>
+                  <section class="leaderboard-card">
+                    <div class="leaderboard-head">
+                      <h4>Landing pages</h4>
+                      <span>Visited from ads</span>
+                    </div>
+                    <div id="landing-leaderboard"></div>
+                  </section>
+                </div>
+              </article>
+            </section>
+          </section>
 
-        <section class="detail-grid">
-          <article class="panel" id="detail-panel">
-            <div class="panel-head">
-              <div>
-                <p class="panel-kicker">Selected ad</p>
-                <h3>Ad detail</h3>
-              </div>
-            </div>
-            <div id="detail-content"></div>
-          </article>
+          <section class="workspace-page" id="page-live-ads" data-page="live-ads" hidden>
+            <section class="single-panel-grid">
+              <article class="panel panel-table" id="ads-panel">
+                <div class="panel-head panel-head-interactive">
+                  <div>
+                    <p class="panel-kicker">Ad rankings</p>
+                    <h3>Performance board</h3>
+                  </div>
+                  <div class="panel-head-actions">
+                    <p class="panel-subtle" id="table-summary"></p>
+                    <button id="ads-collapse-toggle" type="button" class="panel-toggle">Collapse</button>
+                  </div>
+                </div>
+                <div class="table-shell" id="ads-panel-body">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Ad</th>
+                        <th>Spend</th>
+                        <th>Sales</th>
+                        <th>ROAS</th>
+                        <th>CPA</th>
+                        <th>Reach</th>
+                        <th>Clicks</th>
+                        <th>Freq.</th>
+                        <th>Orders</th>
+                        <th>Tier</th>
+                        <th>Preview</th>
+                      </tr>
+                    </thead>
+                    <tbody id="ads-tbody"></tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+          </section>
 
-          <article class="panel" id="recommendations-panel">
-            <div class="panel-head">
-              <div>
-                <p class="panel-kicker">Optimization plan</p>
-                <h3>Recommendations</h3>
-              </div>
-            </div>
-            <div id="recommendations-list"></div>
-          </article>
-        </section>
+          <section class="workspace-page" id="page-ad-content" data-page="ad-content" hidden>
+            <section class="content-grid">
+              <article class="panel" id="content-panel">
+                <div class="panel-head panel-head-interactive">
+                  <div>
+                    <p class="panel-kicker">Ad content</p>
+                    <h3>Live creative library</h3>
+                  </div>
+                  <div class="panel-head-actions">
+                    <p class="panel-subtle" id="content-summary"></p>
+                    <button id="content-collapse-toggle" type="button" class="panel-toggle">Collapse</button>
+                  </div>
+                </div>
+                <div class="content-library" id="content-library"></div>
+              </article>
+            </section>
+          </section>
 
-        <section class="content-grid">
-          <article class="panel" id="content-panel">
-            <div class="panel-head panel-head-interactive">
-              <div>
-                <p class="panel-kicker">Ad content</p>
-                <h3>Live creative library</h3>
-              </div>
-              <div class="panel-head-actions">
-                <p class="panel-subtle" id="content-summary"></p>
-                <button id="content-collapse-toggle" type="button" class="panel-toggle">Collapse</button>
-              </div>
-            </div>
-            <div class="content-library" id="content-library"></div>
-          </article>
-        </section>
+          <section class="workspace-page" id="page-details" data-page="details" hidden>
+            <section class="single-panel-grid">
+              <article class="panel" id="detail-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Selected ad</p>
+                    <h3>Ad detail</h3>
+                  </div>
+                </div>
+                <div id="detail-content"></div>
+              </article>
+            </section>
+          </section>
+
+          <section class="workspace-page" id="page-recommendations" data-page="recommendations" hidden>
+            <section class="single-panel-grid">
+              <article class="panel" id="recommendations-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Optimization plan</p>
+                    <h3>Recommendations</h3>
+                  </div>
+                </div>
+                <div id="recommendations-list"></div>
+              </article>
+            </section>
+          </section>
+        </div>
       </main>
     </div>
 
@@ -230,6 +244,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260416a"></script>
+    <script src="./app.js?v=20260417b"></script>
   </body>
 </html>
