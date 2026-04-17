@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260417c" />
+    <link rel="stylesheet" href="./styles.css?v=20260417d" />
   </head>
   <body>
     <div class="app-shell">
@@ -157,6 +157,29 @@
                     <button id="ads-collapse-toggle" type="button" class="panel-toggle">Collapse</button>
                   </div>
                 </div>
+                <div class="panel-toolbar">
+                  <div class="panel-toolbar-grid">
+                    <label class="panel-select-shell" for="live-ads-sort-metric">
+                      <span class="panel-select-label">Sort by</span>
+                      <select id="live-ads-sort-metric" aria-label="Sort live ads by metric"></select>
+                    </label>
+                    <label class="panel-select-shell" for="live-ads-sort-direction">
+                      <span class="panel-select-label">Direction</span>
+                      <select id="live-ads-sort-direction" aria-label="Choose live ads sort direction">
+                        <option value="desc">Highest first</option>
+                        <option value="asc">Lowest first</option>
+                      </select>
+                    </label>
+                    <label class="panel-select-shell" for="live-ads-status-filter">
+                      <span class="panel-select-label">Status</span>
+                      <select id="live-ads-status-filter" aria-label="Filter live ads by delivery status"></select>
+                    </label>
+                    <label class="panel-select-shell" for="live-ads-format-filter">
+                      <span class="panel-select-label">Format</span>
+                      <select id="live-ads-format-filter" aria-label="Filter live ads by creative format"></select>
+                    </label>
+                  </div>
+                </div>
                 <div class="table-shell" id="ads-panel-body">
                   <table>
                     <thead>
@@ -252,6 +275,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260417c"></script>
+    <script src="./app.js?v=20260417d"></script>
   </body>
 </html>

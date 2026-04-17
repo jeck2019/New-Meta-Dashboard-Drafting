@@ -436,6 +436,20 @@ select:focus,
   gap: 8px;
 }
 
+.panel-toolbar {
+  margin-bottom: 18px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.panel-toolbar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .panel-select-label {
   color: var(--muted);
   font-size: 0.8rem;
@@ -733,7 +747,8 @@ select:focus,
 
   .layout-grid,
   .detail-grid,
-  .hero-panel {
+  .hero-panel,
+  .panel-toolbar-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

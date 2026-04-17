@@ -20,6 +20,20 @@ const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const RESUME_REFRESH_THRESHOLD_MS = 60 * 1000;
 const AUTO_REFRESH_COPY = 'Auto-refreshing every 5 minutes while this tab is open.';
 const VALID_PAGES = ['dashboard', 'live-ads', 'ad-content', 'details', 'recommendations'];
+const LIVE_AD_SORT_OPTIONS = [
+  { value: 'performance', label: 'Performance score' },
+  { value: 'spend', label: 'Spend' },
+  { value: 'sales', label: 'Sales' },
+  { value: 'roas', label: 'ROAS' },
+  { value: 'cpa', label: 'Cost per purchase' },
+  { value: 'reach', label: 'Reach' },
+  { value: 'clicks', label: 'Clicks' },
+  { value: 'frequency', label: 'Frequency' },
+  { value: 'purchases', label: 'Orders' },
+  { value: 'interactions', label: 'Interactions' },
+  { value: 'hookRate', label: 'Hook rate' },
+  { value: 'quality', label: 'Quality score' },
+];
 
 const ZERO_METRICS = {
   spend: 0,
@@ -62,6 +76,7 @@ const MOCK_PAYLOAD = {
       campaign: 'Starter Kit Prospecting',
       product: 'Dry Fire Starter Kit',
       format: 'Video',
+      currentStatus: 'ACTIVE',
       tier: 'Scale',
       tiers: { '7d': 'Scale', '30d': 'Scale' },
       headline: 'Train smarter at home with every rep.',
@@ -171,6 +186,7 @@ const MOCK_PAYLOAD = {
       campaign: 'Marksman Bundle Retargeting',
       product: 'Marksman Bundle',
       format: 'Video',
+      currentStatus: 'ACTIVE',
       tier: 'Hold',
       tiers: { '7d': 'Hold', '30d': 'Hold' },
       headline: 'More realistic reps. Less wasted ammo.',
@@ -280,6 +296,7 @@ const MOCK_PAYLOAD = {
       campaign: 'Laser Bullet Testing',
       product: 'Laser Bullet',
       format: 'Static',
+      currentStatus: 'ACTIVE',
       tier: 'Repair',
       tiers: { '7d': 'Repair', '30d': 'Repair' },
       headline: 'Upgrade the session with a single cartridge.',
@@ -404,6 +421,10 @@ const state = {
   viewerAdId: null,
   lastLoadedAt: 0,
   page: 'dashboard',
+  liveAdsSortMetric: 'performance',
+  liveAdsSortDirection: 'desc',
+  liveAdsStatus: 'All statuses',
+  liveAdsFormat: 'All formats',
 };
 
 let autoRefreshTimer = null;
@@ -430,6 +451,10 @@ const elements = {
   searchInput: document.querySelector('#search-input'),
   campaignFilter: document.querySelector('#campaign-filter'),
   tierFilter: document.querySelector('#tier-filter'),
+  liveAdsSortMetric: document.querySelector('#live-ads-sort-metric'),
+  liveAdsSortDirection: document.querySelector('#live-ads-sort-direction'),
+  liveAdsStatusFilter: document.querySelector('#live-ads-status-filter'),
+  liveAdsFormatFilter: document.querySelector('#live-ads-format-filter'),
   customStartDate: document.querySelector('#custom-start-date'),
   customEndDate: document.querySelector('#custom-end-date'),
   applyCustomRange: document.querySelector('#apply-custom-range'),
@@ -756,6 +781,10 @@ function getCurrentTier(ad) {
   return ad.tiers?.[state.range] || ad.tier || 'Hold';
 }
 
+function getCurrentStatus(ad) {
+  return ad.currentStatus || 'UNKNOWN';
+}
+
 function getCurrentQualityScore(ad) {
   return ad.qualityScores?.[state.range] || ad.qualityScore || 0;
 }
@@ -843,8 +872,7 @@ function getVisibleAds() {
       const matchesQuery = !query || haystack.includes(query);
       const matchesActivity = hasRangeActivity(ad);
       return matchesCampaign && matchesTier && matchesQuery && matchesActivity;
-    })
-    .sort((left, right) => getPerformanceScore(right) - getPerformanceScore(left));
+    });
 }
 
 function compareMetricsForRange(ad) {
@@ -853,6 +881,51 @@ function compareMetricsForRange(ad) {
 
 function currentMetricsForRange(ad) {
   return ad.metrics?.[state.range] || withDerived();
+}
+
+function liveAdsSortLabel() {
+  return LIVE_AD_SORT_OPTIONS.find((option) => option.value === state.liveAdsSortMetric)?.label || 'Performance score';
+}
+
+function liveAdsMetricValue(ad, sortMetric = state.liveAdsSortMetric) {
+  const metrics = currentMetricsForRange(ad);
+
+  switch (sortMetric) {
+    case 'performance':
+      return getPerformanceScore(ad);
+    case 'quality':
+      return getCurrentQualityScore(ad);
+    default:
+      return Number(metrics?.[sortMetric] || 0);
+  }
+}
+
+function compareLiveAds(left, right) {
+  const leftValue = liveAdsMetricValue(left);
+  const rightValue = liveAdsMetricValue(right);
+  const directionMultiplier = state.liveAdsSortDirection === 'asc' ? 1 : -1;
+
+  if (leftValue !== rightValue) {
+    return (leftValue - rightValue) * directionMultiplier;
+  }
+
+  const leftPerformance = getPerformanceScore(left);
+  const rightPerformance = getPerformanceScore(right);
+  if (leftPerformance !== rightPerformance) {
+    return rightPerformance - leftPerformance;
+  }
+
+  return left.name.localeCompare(right.name);
+}
+
+function getLiveAdsVisibleAds(baseVisibleAds) {
+  return [...baseVisibleAds]
+    .filter((ad) => {
+      const matchesStatus = state.liveAdsStatus === 'All statuses' || getCurrentStatus(ad) === state.liveAdsStatus;
+      const matchesFormat = state.liveAdsFormat === 'All formats' || (ad.format || 'Unknown') === state.liveAdsFormat;
+      return matchesStatus && matchesFormat;
+    })
+    .sort(compareLiveAds);
 }
 
 function currentWindowSummary() {
@@ -1034,6 +1107,42 @@ function renderFilters() {
   }
 }
 
+function renderLiveAdsControls(baseVisibleAds) {
+  const statusOptions = ['All statuses', ...new Set(baseVisibleAds.map((ad) => getCurrentStatus(ad)).filter(Boolean))];
+  const formatOptions = ['All formats', ...new Set(baseVisibleAds.map((ad) => ad.format || 'Unknown').filter(Boolean))];
+
+  if (!statusOptions.includes(state.liveAdsStatus)) {
+    state.liveAdsStatus = 'All statuses';
+  }
+  if (!formatOptions.includes(state.liveAdsFormat)) {
+    state.liveAdsFormat = 'All formats';
+  }
+  if (!LIVE_AD_SORT_OPTIONS.some((option) => option.value === state.liveAdsSortMetric)) {
+    state.liveAdsSortMetric = 'performance';
+  }
+  if (!['asc', 'desc'].includes(state.liveAdsSortDirection)) {
+    state.liveAdsSortDirection = 'desc';
+  }
+
+  elements.liveAdsSortMetric.innerHTML = LIVE_AD_SORT_OPTIONS
+    .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+    .join('');
+  elements.liveAdsStatusFilter.innerHTML = statusOptions
+    .map(
+      (status) =>
+        `<option value="${escapeHtml(status)}">${escapeHtml(status === 'All statuses' ? status : titleCase(status))}</option>`
+    )
+    .join('');
+  elements.liveAdsFormatFilter.innerHTML = formatOptions
+    .map((format) => `<option value="${escapeHtml(format)}">${escapeHtml(format)}</option>`)
+    .join('');
+
+  elements.liveAdsSortMetric.value = state.liveAdsSortMetric;
+  elements.liveAdsSortDirection.value = state.liveAdsSortDirection;
+  elements.liveAdsStatusFilter.value = state.liveAdsStatus;
+  elements.liveAdsFormatFilter.value = state.liveAdsFormat;
+}
+
 function renderConnection(visibleAds) {
   const payload = state.connectionPayload || {};
   const account = payload.account || state.payload?.account || {};
@@ -1105,7 +1214,17 @@ function renderMetrics(visibleAds) {
 }
 
 function renderTable(visibleAds) {
-  elements.tableSummary.textContent = `${visibleAds.length} ads ranked by quality, efficiency, and revenue contribution for ${currentWindowSummary()}.`;
+  const activeFilters = [];
+  if (state.liveAdsStatus !== 'All statuses') {
+    activeFilters.push(`${titleCase(state.liveAdsStatus)} status`);
+  }
+  if (state.liveAdsFormat !== 'All formats') {
+    activeFilters.push(`${state.liveAdsFormat} format`);
+  }
+
+  const sortDirectionLabel = state.liveAdsSortDirection === 'asc' ? 'lowest first' : 'highest first';
+  const filterSummary = activeFilters.length ? ` • filters: ${activeFilters.join(' • ')}` : '';
+  elements.tableSummary.textContent = `${visibleAds.length} ads for ${currentWindowSummary()} • sorted by ${liveAdsSortLabel()} (${sortDirectionLabel})${filterSummary}.`;
   renderAdsPanelState();
 
   if (!visibleAds.length) {
@@ -1115,7 +1234,7 @@ function renderTable(visibleAds) {
           <div class="empty-state">
             <p class="empty-kicker">No matches</p>
             <h4>Nothing fits the current filters or date range.</h4>
-            <p>Adjust the search, campaign, tier, or custom date range to bring ads back into view.</p>
+            <p>Adjust the search, campaign, tier, live-ad status, format, or custom date range to bring ads back into view.</p>
           </div>
         </td>
       </tr>
@@ -1770,12 +1889,14 @@ function render() {
   renderPageState();
   renderFilters();
   const visibleAds = getVisibleAds();
+  const liveAds = getLiveAdsVisibleAds(visibleAds);
   const selectedAd = ensureSelectedAd(visibleAds);
 
   renderSelectedAdSelectors(visibleAds, selectedAd);
+  renderLiveAdsControls(visibleAds);
   renderConnection(visibleAds);
   renderMetrics(visibleAds);
-  renderTable(visibleAds);
+  renderTable(liveAds);
   renderLeaderboards(visibleAds);
   renderContentLibrary(visibleAds);
   renderDetail(selectedAd);
@@ -1916,6 +2037,26 @@ function bindEvents() {
 
   elements.tierFilter.addEventListener('change', (event) => {
     state.tier = event.target.value;
+    render();
+  });
+
+  elements.liveAdsSortMetric.addEventListener('change', (event) => {
+    state.liveAdsSortMetric = event.target.value;
+    render();
+  });
+
+  elements.liveAdsSortDirection.addEventListener('change', (event) => {
+    state.liveAdsSortDirection = event.target.value;
+    render();
+  });
+
+  elements.liveAdsStatusFilter.addEventListener('change', (event) => {
+    state.liveAdsStatus = event.target.value;
+    render();
+  });
+
+  elements.liveAdsFormatFilter.addEventListener('change', (event) => {
+    state.liveAdsFormat = event.target.value;
     render();
   });
 
