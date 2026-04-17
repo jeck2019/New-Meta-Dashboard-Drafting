@@ -1434,129 +1434,140 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
     cached = CACHE.get(cache_key)
     if cached and not force_refresh and time.time() - cached['time'] < CACHE_TTL_SECONDS:
         return cached['data']
-
-    account = meta_get(account_id, {'fields': 'id,name,account_status,currency,timezone_name,business'}, token)
-    windows = build_windows(custom_since=custom_since, custom_until=custom_until)
-    ads_rows = fetch_account_ads(token, account_id)
-    ads_by_id = {row.get('id'): row for row in ads_rows if row.get('id')}
-    insights_by_window = {name: fetch_window_insights(token, account_id, window) for name, window in windows.items()}
-    demographics = fetch_demographic_breakdowns(token, account_id, windows)
-    daily_sales_series = fetch_daily_sales_series(token, account_id, windows['30d'])
-    daily_metric_rows = []
-    if 'custom' in windows:
-        custom_series = fetch_daily_sales_series(token, account_id, windows['custom'])
-        daily_sales_series = merge_daily_series(daily_sales_series, custom_series)
-    if storage_state['enabled']:
-        daily_metric_rows = fetch_daily_metrics_rows(token, account_id, build_history_window(windows))
-    trend_points = build_trend_points(daily_sales_series, windows)
-
-    reported_ad_ids = set()
-    for metrics_by_ad in insights_by_window.values():
-        reported_ad_ids.update(metrics_by_ad.keys())
-
-    payload_ads = []
-    for ad_id in sorted(reported_ad_ids):
-        ad = ads_by_id.get(ad_id, {'id': ad_id, 'name': 'Untitled ad'})
-        creative_fields = extract_creative_fields(ad)
-        current_7d = insights_by_window['7d'].get(ad_id, ZERO_METRICS.copy())
-        current_30d = insights_by_window['30d'].get(ad_id, ZERO_METRICS.copy())
-        wow = insights_by_window['wow'].get(ad_id, ZERO_METRICS.copy())
-        mom = insights_by_window['mom'].get(ad_id, ZERO_METRICS.copy())
-        custom_metrics = insights_by_window.get('custom', {}).get(ad_id, ZERO_METRICS.copy())
-        custom_compare = insights_by_window.get('customCompare', {}).get(ad_id, ZERO_METRICS.copy())
-        video_metadata = fetch_video_metadata(token, creative_fields['videoId']) if creative_fields['videoId'] else {}
-        landing_page = creative_fields['landingPage']
-
-        metrics_by_range = {'7d': current_7d, '30d': current_30d, 'wow': wow, 'mom': mom}
-        quality_scores = {
-            '7d': compute_quality_score(current_7d),
-            '30d': compute_quality_score(current_30d),
-        }
-        tiers = {
-            '7d': classify_tier(current_7d, wow),
-            '30d': classify_tier(current_30d, mom),
-        }
-
+    try:
+        account = meta_get(account_id, {'fields': 'id,name,account_status,currency,timezone_name,business'}, token)
+        windows = build_windows(custom_since=custom_since, custom_until=custom_until)
+        ads_rows = fetch_account_ads(token, account_id)
+        ads_by_id = {row.get('id'): row for row in ads_rows if row.get('id')}
+        insights_by_window = {name: fetch_window_insights(token, account_id, window) for name, window in windows.items()}
+        demographics = fetch_demographic_breakdowns(token, account_id, windows)
+        daily_sales_series = fetch_daily_sales_series(token, account_id, windows['30d'])
+        daily_metric_rows = []
         if 'custom' in windows:
-            metrics_by_range['custom'] = custom_metrics
-            metrics_by_range['customCompare'] = custom_compare
-            quality_scores['custom'] = compute_quality_score(custom_metrics)
-            tiers['custom'] = classify_tier(custom_metrics, custom_compare)
+            custom_series = fetch_daily_sales_series(token, account_id, windows['custom'])
+            daily_sales_series = merge_daily_series(daily_sales_series, custom_series)
+        if storage_state['enabled']:
+            daily_metric_rows = fetch_daily_metrics_rows(token, account_id, build_history_window(windows))
+        trend_points = build_trend_points(daily_sales_series, windows)
 
-        visited_pages_by_range = {
-            key: [{'path': landing_page, 'visits': round(max(metrics.get('landingPageViews', 0.0), metrics.get('purchases', 0.0)))}]
-            for key, metrics in metrics_by_range.items()
-            if key in ('7d', '30d', 'custom')
+        reported_ad_ids = set()
+        for metrics_by_ad in insights_by_window.values():
+            reported_ad_ids.update(metrics_by_ad.keys())
+
+        payload_ads = []
+        for ad_id in sorted(reported_ad_ids):
+            ad = ads_by_id.get(ad_id, {'id': ad_id, 'name': 'Untitled ad'})
+            creative_fields = extract_creative_fields(ad)
+            current_7d = insights_by_window['7d'].get(ad_id, ZERO_METRICS.copy())
+            current_30d = insights_by_window['30d'].get(ad_id, ZERO_METRICS.copy())
+            wow = insights_by_window['wow'].get(ad_id, ZERO_METRICS.copy())
+            mom = insights_by_window['mom'].get(ad_id, ZERO_METRICS.copy())
+            custom_metrics = insights_by_window.get('custom', {}).get(ad_id, ZERO_METRICS.copy())
+            custom_compare = insights_by_window.get('customCompare', {}).get(ad_id, ZERO_METRICS.copy())
+            video_metadata = fetch_video_metadata(token, creative_fields['videoId']) if creative_fields['videoId'] else {}
+            landing_page = creative_fields['landingPage']
+
+            metrics_by_range = {'7d': current_7d, '30d': current_30d, 'wow': wow, 'mom': mom}
+            quality_scores = {
+                '7d': compute_quality_score(current_7d),
+                '30d': compute_quality_score(current_30d),
+            }
+            tiers = {
+                '7d': classify_tier(current_7d, wow),
+                '30d': classify_tier(current_30d, mom),
+            }
+
+            if 'custom' in windows:
+                metrics_by_range['custom'] = custom_metrics
+                metrics_by_range['customCompare'] = custom_compare
+                quality_scores['custom'] = compute_quality_score(custom_metrics)
+                tiers['custom'] = classify_tier(custom_metrics, custom_compare)
+
+            visited_pages_by_range = {
+                key: [{'path': landing_page, 'visits': round(max(metrics.get('landingPageViews', 0.0), metrics.get('purchases', 0.0)))}]
+                for key, metrics in metrics_by_range.items()
+                if key in ('7d', '30d', 'custom')
+            }
+
+            payload_ads.append({
+                'id': ad_id,
+                'name': ad.get('name', 'Untitled ad'),
+                'campaign': (ad.get('campaign') or {}).get('name') or 'Unmapped campaign',
+                'currentStatus': ad.get('effective_status', 'UNKNOWN'),
+                'creativeId': creative_fields['creativeId'],
+                'product': infer_product((ad.get('campaign') or {}).get('name', ''), landing_page),
+                'format': creative_fields['format'],
+                'tier': tiers['7d'],
+                'tiers': tiers,
+                'headline': creative_fields['headline'],
+                'copy': creative_fields['copy'],
+                'description': creative_fields['description'],
+                'hook': creative_fields['hook'],
+                'landingPage': landing_page,
+                'destinationUrl': creative_fields['destinationUrl'],
+                'creativeName': creative_fields['creativeName'],
+                'callToAction': creative_fields['callToAction'],
+                'mediaPreviewUrl': creative_fields['mediaPreviewUrl'] or video_metadata.get('thumbnailUrl', ''),
+                'mediaSourceUrl': video_metadata.get('source', ''),
+                'mediaPermalinkUrl': video_metadata.get('permalinkUrl', ''),
+                'mediaLengthSeconds': video_metadata.get('length', 0.0),
+                'videoId': creative_fields['videoId'],
+                'imageHash': creative_fields['imageHash'],
+                'bodyVariants': creative_fields['bodyVariants'],
+                'titleVariants': creative_fields['titleVariants'],
+                'descriptionVariants': creative_fields['descriptionVariants'],
+                'linkVariants': creative_fields['linkVariants'],
+                'ctaVariants': creative_fields['ctaVariants'],
+                'qualityScore': quality_scores['7d'],
+                'qualityScores': quality_scores,
+                'avgWatchTime': 0,
+                'trend7': trend_points.get(ad_id, {}).get('trend7', [0, 0, 0, 0, 0, 0, 0]),
+                'trend30': trend_points.get(ad_id, {}).get('trend30', [0, 0, 0, 0, 0, 0]),
+                'trendCustomDaily': trend_points.get(ad_id, {}).get('trendCustomDaily', []),
+                'trendCustomBuckets': trend_points.get(ad_id, {}).get('trendCustomBuckets', []),
+                'visitedPages': visited_pages_by_range.get('7d', [{'path': landing_page, 'visits': 0}]),
+                'visitedPagesByRange': visited_pages_by_range,
+                'metrics': metrics_by_range,
+            })
+
+        payload = {
+            'source': 'meta',
+            'configured': True,
+            'generatedAt': datetime.utcnow().isoformat() + 'Z',
+            'account': {
+                'id': account.get('id'),
+                'name': account.get('name'),
+                'currency': account.get('currency'),
+                'timezoneName': account.get('timezone_name'),
+                'business': account.get('business') or {},
+            },
+            'periods': windows,
+            'ads': payload_ads,
+            'demographics': demographics,
+            'storage': storage_state,
+            'stale': False,
+            'staleReason': '',
         }
 
-        payload_ads.append({
-            'id': ad_id,
-            'name': ad.get('name', 'Untitled ad'),
-            'campaign': (ad.get('campaign') or {}).get('name') or 'Unmapped campaign',
-            'currentStatus': ad.get('effective_status', 'UNKNOWN'),
-            'creativeId': creative_fields['creativeId'],
-            'product': infer_product((ad.get('campaign') or {}).get('name', ''), landing_page),
-            'format': creative_fields['format'],
-            'tier': tiers['7d'],
-            'tiers': tiers,
-            'headline': creative_fields['headline'],
-            'copy': creative_fields['copy'],
-            'description': creative_fields['description'],
-            'hook': creative_fields['hook'],
-            'landingPage': landing_page,
-            'destinationUrl': creative_fields['destinationUrl'],
-            'creativeName': creative_fields['creativeName'],
-            'callToAction': creative_fields['callToAction'],
-            'mediaPreviewUrl': creative_fields['mediaPreviewUrl'] or video_metadata.get('thumbnailUrl', ''),
-            'mediaSourceUrl': video_metadata.get('source', ''),
-            'mediaPermalinkUrl': video_metadata.get('permalinkUrl', ''),
-            'mediaLengthSeconds': video_metadata.get('length', 0.0),
-            'videoId': creative_fields['videoId'],
-            'imageHash': creative_fields['imageHash'],
-            'bodyVariants': creative_fields['bodyVariants'],
-            'titleVariants': creative_fields['titleVariants'],
-            'descriptionVariants': creative_fields['descriptionVariants'],
-            'linkVariants': creative_fields['linkVariants'],
-            'ctaVariants': creative_fields['ctaVariants'],
-            'qualityScore': quality_scores['7d'],
-            'qualityScores': quality_scores,
-            'avgWatchTime': 0,
-            'trend7': trend_points.get(ad_id, {}).get('trend7', [0, 0, 0, 0, 0, 0, 0]),
-            'trend30': trend_points.get(ad_id, {}).get('trend30', [0, 0, 0, 0, 0, 0]),
-            'trendCustomDaily': trend_points.get(ad_id, {}).get('trendCustomDaily', []),
-            'trendCustomBuckets': trend_points.get(ad_id, {}).get('trendCustomBuckets', []),
-            'visitedPages': visited_pages_by_range.get('7d', [{'path': landing_page, 'visits': 0}]),
-            'visitedPagesByRange': visited_pages_by_range,
-            'metrics': metrics_by_range,
-        })
+        if storage_state['enabled']:
+            try:
+                storage_state['syncRunId'] = persist_dashboard_snapshot(settings, payload, ads_by_id, daily_metric_rows)
+                storage_state['persisted'] = True
+            except SupabaseAPIError as exc:
+                storage_state['error'] = exc.message
+        payload['storage'] = storage_state
 
-    payload = {
-        'source': 'meta',
-        'configured': True,
-        'generatedAt': datetime.utcnow().isoformat() + 'Z',
-        'account': {
-            'id': account.get('id'),
-            'name': account.get('name'),
-            'currency': account.get('currency'),
-            'timezoneName': account.get('timezone_name'),
-            'business': account.get('business') or {},
-        },
-        'periods': windows,
-        'ads': payload_ads,
-        'demographics': demographics,
-        'storage': storage_state,
-    }
-
-    if storage_state['enabled']:
-        try:
-            storage_state['syncRunId'] = persist_dashboard_snapshot(settings, payload, ads_by_id, daily_metric_rows)
-            storage_state['persisted'] = True
-        except SupabaseAPIError as exc:
-            storage_state['error'] = exc.message
-    payload['storage'] = storage_state
-
-    CACHE[cache_key] = {'time': time.time(), 'data': payload}
-    return payload
+        CACHE[cache_key] = {'time': time.time(), 'data': payload}
+        return payload
+    except MetaAPIError as exc:
+        if cached:
+            stale_payload = json.loads(json.dumps(cached['data']))
+            stale_payload['stale'] = True
+            stale_payload['staleReason'] = exc.message
+            stale_payload.setdefault('storage', {})
+            stale_payload['storage']['error'] = exc.message
+            return stale_payload
+        raise
 
 
 class AppHandler(SimpleHTTPRequestHandler):

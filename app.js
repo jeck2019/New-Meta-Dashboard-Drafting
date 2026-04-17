@@ -1619,7 +1619,14 @@ function renderConnection(visibleAds) {
     ? new Date(payload.generatedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
     : 'Awaiting sync';
 
-  if (!state.usingMock && payload.source === 'meta') {
+  if (!state.usingMock && payload.source === 'meta' && payload.stale) {
+    elements.connectionHeading.textContent = 'Live Meta snapshot retained';
+    elements.connectionCopy.textContent = `A fresh Meta refresh did not complete, so the dashboard is holding the last successful attributed snapshot from ${generatedAt}. ${AUTO_REFRESH_COPY}`;
+    elements.bannerStatus.textContent = 'Status: retained live snapshot';
+    const currentWindowAds = visibleAds.filter((ad) => hasCurrentWindowActivity(ad)).length;
+    elements.bannerSource.textContent = `${currentWindowAds} ads with delivery in ${currentWindowSummary()}`;
+    elements.bannerAccount.textContent = `Last successful sync ${generatedAt}`;
+  } else if (!state.usingMock && payload.source === 'meta') {
     elements.connectionHeading.textContent = 'Live Meta connection confirmed';
     elements.connectionCopy.textContent = `Reading ad-level reporting directly from ${businessName}. ${AUTO_REFRESH_COPY}`;
     elements.bannerStatus.textContent = 'Status: live Meta data';
@@ -2678,4 +2685,4 @@ function bindEvents() {
 
 bindEvents();
 setPage(getPageFromHash());
-loadDashboard({ forceRefresh: true });
+loadDashboard();
