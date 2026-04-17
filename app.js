@@ -2535,70 +2535,255 @@ function renderViewer() {
   `;
 }
 
+function recommendationSnippet(value, fallback = 'this ad', maxLength = 88) {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!text) {
+    return fallback;
+  }
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function averageFromAds(ads, getter, options = {}) {
+  const values = (ads || [])
+    .map((ad) => Number(getter(ad) || 0))
+    .filter((value) => Number.isFinite(value))
+    .filter((value) => (options.excludeZero ? value > 0 : true));
+
+  return values.length ? average(values) : 0;
+}
+
+function buildRecommendationContext(visibleAds, selectedAd) {
+  const metrics = currentMetricsForRange(selectedAd);
+  const compare = compareMetricsForRange(selectedAd);
+  const category = classifyAdCategory(selectedAd);
+  const allPeers = visibleAds.filter((ad) => ad.id !== selectedAd.id);
+  const sameThemePeers = allPeers.filter((ad) => classifyAdCategory(ad).key === category.key);
+  const benchmarkAds = sameThemePeers.length ? sameThemePeers : allPeers.length ? allPeers : visibleAds;
+  const benchmarkScope = sameThemePeers.length ? `${category.label.toLowerCase()} ads` : 'current filtered ads';
+  const resonanceLookup = buildResonanceLookup(visibleAds);
+  const resonance = resonanceLookup.get(selectedAd.id) || {};
+  const audienceLabel = [resonance.age?.displayLabel, resonance.gender?.displayLabel].filter(Boolean).join(' • ');
+  const quality = getCurrentQualityScore(selectedAd);
+  const peerAverages = {
+    roas: averageFromAds(benchmarkAds, (ad) => currentMetricsForRange(ad).roas),
+    cpa: averageFromAds(benchmarkAds, (ad) => currentMetricsForRange(ad).cpa, { excludeZero: true }),
+    hookRate: averageFromAds(
+      benchmarkAds.filter((ad) => currentMetricsForRange(ad).videoPlays > 0),
+      (ad) => currentMetricsForRange(ad).hookRate
+    ),
+    landingRate: averageFromAds(
+      benchmarkAds.filter((ad) => currentMetricsForRange(ad).outboundClicks > 0),
+      (ad) => currentMetricsForRange(ad).landingRate
+    ),
+    quality: averageFromAds(benchmarkAds, (ad) => getCurrentQualityScore(ad), { excludeZero: true }),
+    frequency: averageFromAds(benchmarkAds, (ad) => currentMetricsForRange(ad).frequency),
+  };
+
+  return {
+    metrics,
+    compare,
+    category,
+    benchmarkScope,
+    audienceLabel,
+    quality,
+    peerAverages,
+    salesDelta: percentChange(metrics.sales, compare.sales),
+    roasDelta: percentChange(metrics.roas, compare.roas),
+    cpaDelta: percentChange(metrics.cpa, compare.cpa),
+    clicksDelta: percentChange(metrics.clicks, compare.clicks),
+    promiseLine: recommendationSnippet(selectedAd.headline || selectedAd.copy || selectedAd.name, selectedAd.name, 96),
+    hookLine: recommendationSnippet(selectedAd.hook || selectedAd.headline || selectedAd.name, selectedAd.name, 96),
+    landingLine: recommendationSnippet(selectedAd.landingPage || selectedAd.destinationUrl || 'the landing page', 'the landing page', 72),
+    ctaLabel: formatCallToAction(selectedAd.callToAction),
+    creativeName: recommendationSnippet(selectedAd.creativeName || selectedAd.name, selectedAd.name, 72),
+    formatLabel: String(selectedAd.format || 'Creative').toLowerCase(),
+  };
+}
+
 function buildRecommendations(visibleAds, selectedAd) {
   const items = [];
   if (!selectedAd) {
     return items;
   }
 
-  const metrics = currentMetricsForRange(selectedAd);
-  const compare = compareMetricsForRange(selectedAd);
-  const salesDelta = percentChange(metrics.sales, compare.sales);
+  const context = buildRecommendationContext(visibleAds, selectedAd);
+  const {
+    metrics,
+    category,
+    benchmarkScope,
+    audienceLabel,
+    quality,
+    peerAverages,
+    salesDelta,
+    roasDelta,
+    cpaDelta,
+    clicksDelta,
+    promiseLine,
+    hookLine,
+    landingLine,
+    ctaLabel,
+    creativeName,
+    formatLabel,
+  } = context;
+  const tier = getCurrentTier(selectedAd);
+  const peerRoas = peerAverages.roas || metrics.roas;
+  const peerCpa = peerAverages.cpa || metrics.cpa;
+  const peerHookRate = peerAverages.hookRate || metrics.hookRate;
+  const peerLandingRate = peerAverages.landingRate || metrics.landingRate;
+  const peerQuality = peerAverages.quality || quality;
+  const peerFrequency = peerAverages.frequency || metrics.frequency;
+  const isVideo = metrics.videoPlays > 0 || String(selectedAd.format || '').toLowerCase().includes('video');
+  const audienceCopy = audienceLabel ? `${audienceLabel} currently responds best to this ad.` : 'Meta has not returned a clear best-response demographic segment for this ad yet.';
 
-  if (getCurrentTier(selectedAd) === 'Repair' || metrics.roas < 1.8 || (salesDelta !== null && salesDelta <= -20)) {
+  if (
+    tier === 'Repair' ||
+    metrics.roas < 1.8 ||
+    (peerRoas && metrics.roas < peerRoas * 0.78) ||
+    (salesDelta !== null && salesDelta <= -18)
+  ) {
     items.push({
+      score: 100,
       priority: 'high',
-      title: `Reset the ${selectedAd.name} concept before adding more spend`,
-      body: `This ad is falling below the revenue bar with ${formatNumber(metrics.roas, 2)}x ROAS and ${formatDelta(salesDelta)} sales movement. Refresh the opening angle, tighten the first frame, and cut weaker copy variants before scaling again.`,
-      actions: ['Refresh opening 3 seconds', 'Trim weakest copy lines', 'Hold spend until new variant is live'],
+      title: `Rework the core promise in ${selectedAd.name}`,
+      body: `${selectedAd.name} is under the efficiency bar at ${formatNumber(metrics.roas, 2)}x ROAS versus ${formatNumber(peerRoas, 2)}x across ${benchmarkScope}, with ${formatDelta(salesDelta)} sales movement versus the prior window. The current lead message "${promiseLine}" is not translating enough attention into revenue for this ${category.label.toLowerCase()} angle.`,
+      actions: [
+        `Write 2-3 new first-line variants around ${category.label.toLowerCase()}`,
+        `Keep only one message focus instead of stacking multiple benefits`,
+        'Hold further spend increases until a new variant beats the current ROAS',
+      ],
     });
   }
 
-  if (metrics.landingRate < 0.6 && metrics.outboundClicks >= 40) {
+  if (
+    metrics.outboundClicks >= 40 &&
+    (metrics.landingRate < 0.6 || (peerLandingRate && metrics.landingRate < peerLandingRate * 0.82))
+  ) {
     items.push({
+      score: 92,
       priority: 'high',
-      title: `Improve landing-page match for ${selectedAd.product}`,
-      body: `${formatPercent(metrics.landingRate, 1)} of outbound clicks are turning into page visits. Align the promise in the ad with the product page headline and make sure the page above the fold mirrors the hook.`,
-      actions: ['Mirror hook in page headline', 'Reduce above-the-fold friction', 'Audit page speed on mobile'],
+      title: `Tighten the click-to-page handoff for ${selectedAd.name}`,
+      body: `${formatPercent(metrics.landingRate, 1)} of outbound clicks are turning into page views, versus ${formatPercent(peerLandingRate, 1)} across ${benchmarkScope}. The promise in "${promiseLine}" and the CTA "${ctaLabel}" need a closer match to ${landingLine} so users do not drop before the page fully lands.`,
+      actions: [
+        `Mirror "${recommendationSnippet(selectedAd.hook || selectedAd.headline || selectedAd.product, selectedAd.product, 54)}" above the fold`,
+        'Move proof, offer, or product payoff higher on the page',
+        'Audit mobile load speed and first-screen friction',
+      ],
     });
   }
 
-  if (metrics.videoPlays > 0 && metrics.hookRate < 0.22) {
+  if (
+    metrics.purchases >= 3 &&
+    peerCpa > 0 &&
+    (metrics.cpa > peerCpa * 1.2 || (cpaDelta !== null && cpaDelta > 15))
+  ) {
     items.push({
+      score: 82,
       priority: 'medium',
-      title: `Strengthen the hook on ${selectedAd.name}`,
-      body: 'The ad is converting too few impressions into video starts. Test a faster proof point, an on-screen promise in the first second, or a tighter visual cue tied to dry fire accuracy.',
-      actions: ['Open with product benefit', 'Add stronger text overlay', 'Swap in quicker product demo'],
+      title: `Improve purchase efficiency after the click`,
+      body: `${selectedAd.name} is converting at ${formatCurrency(metrics.cpa, 2)} CPA versus ${formatCurrency(peerCpa, 2)} across ${benchmarkScope}. That means the ad is generating enough qualified traffic to purchase, but the close rate after the click is weaker than the surrounding set.`,
+      actions: [
+        `Put stronger price/value framing next to ${landingLine}`,
+        'Move social proof or product proof closer to the purchase action',
+        `Test a tighter CTA path than "${ctaLabel}" if the current flow feels too broad`,
+      ],
     });
   }
 
-  if (metrics.frequency > 2.8 && metrics.reach > 10000) {
+  if (
+    isVideo &&
+    (metrics.hookRate < 0.22 || (peerHookRate && metrics.hookRate < peerHookRate * 0.82))
+  ) {
     items.push({
+      score: 84,
       priority: 'medium',
-      title: `Watch for creative fatigue on ${selectedAd.name}`,
-      body: `Frequency is at ${formatNumber(metrics.frequency, 2)} in the current window. If click-through softens next, rotate the thumbnail, hook, or headline before audience saturation drags efficiency further.`,
-      actions: ['Refresh thumbnail', 'Rotate hook line', 'Test adjacent audience segment'],
+      title: `Sharpen the opening hook in ${selectedAd.name}`,
+      body: `This ${formatLabel} is starting viewers at ${formatPercent(metrics.hookRate, 1)} versus ${formatPercent(peerHookRate, 1)} for ${benchmarkScope}. The opener "${hookLine}" likely needs a faster payoff, clearer benefit, or more immediate visual proof in the first second.`,
+      actions: [
+        'Show the product result before setup or explanation',
+        `Put the strongest promise from "${creativeName}" on-screen in frame one`,
+        'Cut any slow intro shots before the first proof point',
+      ],
     });
   }
 
-  const scaleCandidates = visibleAds
-    .filter((ad) => {
-      const metricsCurrent = currentMetricsForRange(ad);
-      return metricsCurrent.roas >= 3 && metricsCurrent.purchases >= 8;
-    })
-    .slice(0, 2);
-
-  scaleCandidates.forEach((ad) => {
-    const metricsCurrent = currentMetricsForRange(ad);
+  if (
+    metrics.frequency > 2.8 &&
+    metrics.reach > 10000 &&
+    ((salesDelta !== null && salesDelta < -10) || (clicksDelta !== null && clicksDelta < -8) || (roasDelta !== null && roasDelta < -8))
+  ) {
     items.push({
+      score: 76,
+      priority: 'medium',
+      title: `Rotate this creative before fatigue deepens`,
+      body: `Frequency is ${formatNumber(metrics.frequency, 2)} versus ${formatNumber(peerFrequency, 2)} across ${benchmarkScope}, and recent efficiency is softening. This usually means the current hook/headline combination has been seen too often by the same audience.`,
+      actions: [
+        'Keep the offer constant but swap the first frame or thumbnail',
+        `Test a fresh headline version against "${promiseLine}"`,
+        audienceLabel ? `Build the next cut specifically for ${audienceLabel}` : 'Test a tighter audience-specific angle in the next cut',
+      ],
+    });
+  }
+
+  if (
+    quality > 0 &&
+    (quality < 70 || (peerQuality && quality < peerQuality - 8))
+  ) {
+    items.push({
+      score: 68,
+      priority: 'medium',
+      title: `Improve the platform-native quality of ${selectedAd.name}`,
+      body: `Quality score is ${formatNumber(quality)} versus ${formatNumber(peerQuality)} across ${benchmarkScope}. Cleaner framing, a simpler opening claim, and less text density should help this ad feel more native and improve delivery quality.`,
+      actions: [
+        'Shorten the first text block and simplify the headline',
+        'Use a more native-looking thumbnail or UGC-style opening frame',
+        'Reduce competing claims so one benefit is obvious immediately',
+      ],
+    });
+  }
+
+  if (
+    audienceLabel &&
+    (metrics.roas < peerRoas || items.length < 2)
+  ) {
+    items.push({
+      score: 58,
       priority: 'low',
-      title: `Lean into ${ad.name}`,
-      body: `${ad.name} is clearing the scale threshold at ${formatNumber(metricsCurrent.roas, 2)}x ROAS with ${formatNumber(metricsCurrent.purchases)} purchases in ${rangeDisplayLabel().toLowerCase()}. Consider a measured budget lift or copy extension before duplicating the concept.`,
-      actions: ['Increase spend 10-15%', 'Launch sibling copy test', 'Repurpose winning hook into new format'],
+      title: `Bias the next variant toward ${audienceLabel}`,
+      body: `${audienceCopy} Use that signal to make the next version of ${selectedAd.name} feel more intentionally written for the audience already showing the strongest response, instead of keeping the message broad.`,
+      actions: [
+        `Rewrite the headline and hook for ${audienceLabel}`,
+        `Use imagery or examples that fit the ${category.label.toLowerCase()} theme`,
+        'Test the focused variant against the current broad message',
+      ],
     });
-  });
+  }
 
-  return items.slice(0, 4);
+  if (!items.length) {
+    items.push({
+      score: 40,
+      priority: 'low',
+      title: `Protect what is already working in ${selectedAd.name}`,
+      body: `${selectedAd.name} is not throwing a major warning signal right now. Its strongest opportunity is to preserve the current promise "${promiseLine}" while testing one adjacent variant instead of making a broad reset.`,
+      actions: [
+        'Duplicate the ad and test one new hook only',
+        audienceLabel ? `Keep the best-performing audience angle: ${audienceLabel}` : 'Keep targeting stable while testing the creative',
+        'Increase spend gradually only if the next variant maintains current efficiency',
+      ],
+    });
+  }
+
+  return items
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 4)
+    .map(({ score, ...item }) => item);
 }
 
 function renderRecommendations(visibleAds, selectedAd) {
