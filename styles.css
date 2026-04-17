@@ -430,6 +430,20 @@ select:focus,
   font-size: 0.94rem;
 }
 
+.panel-select-shell {
+  min-width: min(100%, 340px);
+  display: grid;
+  gap: 8px;
+}
+
+.panel-select-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .table-shell {
   overflow: auto;
   margin: 0 -8px;

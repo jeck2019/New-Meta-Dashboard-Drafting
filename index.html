@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260417b" />
+    <link rel="stylesheet" href="./styles.css?v=20260417c" />
   </head>
   <body>
     <div class="app-shell">
@@ -207,6 +207,10 @@
                     <p class="panel-kicker">Selected ad</p>
                     <h3>Ad detail</h3>
                   </div>
+                  <div class="panel-head-actions panel-select-shell">
+                    <label class="panel-select-label" for="detail-ad-select">Choose ad</label>
+                    <select id="detail-ad-select" aria-label="Choose ad for details"></select>
+                  </div>
                 </div>
                 <div id="detail-content"></div>
               </article>
@@ -220,6 +224,10 @@
                   <div>
                     <p class="panel-kicker">Optimization plan</p>
                     <h3>Recommendations</h3>
+                  </div>
+                  <div class="panel-head-actions panel-select-shell">
+                    <label class="panel-select-label" for="recommendations-ad-select">Choose ad</label>
+                    <select id="recommendations-ad-select" aria-label="Choose ad for recommendations"></select>
                   </div>
                 </div>
                 <div id="recommendations-list"></div>
@@ -244,6 +252,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260417b"></script>
+    <script src="./app.js?v=20260417c"></script>
   </body>
 </html>

@@ -443,6 +443,8 @@ const elements = {
   viewerMeta: document.querySelector('#viewer-meta'),
   viewerTitle: document.querySelector('#viewer-title'),
   viewerClose: document.querySelector('#viewer-close'),
+  detailAdSelect: document.querySelector('#detail-ad-select'),
+  recommendationsAdSelect: document.querySelector('#recommendations-ad-select'),
   rangeButtons: Array.from(document.querySelectorAll('#range-toggle button')),
   navLinks: Array.from(document.querySelectorAll('.nav-link')),
   workspacePages: Array.from(document.querySelectorAll('.workspace-page')),
@@ -889,6 +891,27 @@ function renderPageState() {
     const isActive = page.dataset.page === state.page;
     page.classList.toggle('is-active', isActive);
     page.hidden = !isActive;
+  });
+}
+
+function renderSelectedAdSelectors(visibleAds, selectedAd) {
+  const selectors = [elements.detailAdSelect, elements.recommendationsAdSelect];
+  const optionsMarkup = visibleAds.length
+    ? visibleAds
+        .map(
+          (ad) =>
+            `<option value="${escapeHtml(ad.id)}">${escapeHtml(ad.name)} • ${escapeHtml(ad.campaign)}</option>`
+        )
+        .join('')
+    : '<option value="">No ads available in this view</option>';
+
+  selectors.forEach((select) => {
+    if (!select) {
+      return;
+    }
+    select.innerHTML = optionsMarkup;
+    select.disabled = !visibleAds.length;
+    select.value = selectedAd?.id || (visibleAds[0]?.id ?? '');
   });
 }
 
@@ -1749,6 +1772,7 @@ function render() {
   const visibleAds = getVisibleAds();
   const selectedAd = ensureSelectedAd(visibleAds);
 
+  renderSelectedAdSelectors(visibleAds, selectedAd);
   renderConnection(visibleAds);
   renderMetrics(visibleAds);
   renderTable(visibleAds);
@@ -1894,6 +1918,17 @@ function bindEvents() {
     state.tier = event.target.value;
     render();
   });
+
+  const handleSelectedAdChange = (event) => {
+    if (!event.target.value) {
+      return;
+    }
+    state.selectedAdId = event.target.value;
+    render();
+  };
+
+  elements.detailAdSelect.addEventListener('change', handleSelectedAdChange);
+  elements.recommendationsAdSelect.addEventListener('change', handleSelectedAdChange);
 
   elements.customStartDate.addEventListener('change', (event) => {
     state.customSince = event.target.value;
