@@ -538,6 +538,8 @@ const elements = {
   bannerStatus: document.querySelector('#banner-status'),
   bannerSource: document.querySelector('#banner-source'),
   bannerAccount: document.querySelector('#banner-account'),
+  dashboardSpotlightSummary: document.querySelector('#dashboard-spotlight-summary'),
+  dashboardSpotlightGrid: document.querySelector('#dashboard-spotlight-grid'),
   metricsGrid: document.querySelector('#metrics-grid'),
   tableSummary: document.querySelector('#table-summary'),
   adsPanelBody: document.querySelector('#ads-panel-body'),
@@ -826,13 +828,16 @@ function normalizePayload(payload) {
   return {
     ...payload,
     demographics: normalizeDemographicsPayload(payload.demographics),
-    ads: (payload.ads || []).map((ad) => {
+    ads: (payload.ads || []).map((ad, index) => {
       const metrics = Object.fromEntries(
         Object.entries(ad.metrics || {}).map(([key, value]) => [key, withDerived(value)])
       );
+      const fallbackCreatedAt = shiftIsoDate(payload?.periods?.['30d']?.until || todayIso(), -(28 + index * 9));
 
       return {
         ...ad,
+        createdAt: ad.createdAt || fallbackCreatedAt,
+        adsetName: ad.adsetName || '',
         metrics,
         tiers: ad.tiers || { '7d': ad.tier, '30d': ad.tier },
         qualityScores: ad.qualityScores || { '7d': ad.qualityScore, '30d': ad.qualityScore },
@@ -921,6 +926,56 @@ function formatWatchTime(seconds) {
     return `${formatNumber(seconds, 1)} sec`;
   }
   return `${formatNumber(seconds / 60, 1)} min`;
+}
+
+function formatRuntimeLabel(createdAt) {
+  if (!createdAt) {
+    return 'Runtime unavailable';
+  }
+
+  const created = new Date(createdAt);
+  if (Number.isNaN(created.getTime())) {
+    return 'Runtime unavailable';
+  }
+
+  const today = new Date();
+  const diffMs = today.getTime() - created.getTime();
+  if (diffMs < 0) {
+    return 'Started today';
+  }
+
+  const days = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+  if (days <= 1) {
+    return 'Running 1 day';
+  }
+  if (days < 14) {
+    return `Running ${days} days`;
+  }
+  if (days < 60) {
+    return `Running ${Math.floor(days / 7)} wk`;
+  }
+  if (days < 365) {
+    return `Running ${Math.floor(days / 30)} mo`;
+  }
+
+  const years = Math.floor(days / 365);
+  const months = Math.floor((days % 365) / 30);
+  return months ? `Running ${years} yr ${months} mo` : `Running ${years} yr`;
+}
+
+function formatShortDate(value) {
+  if (!value) {
+    return '';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function formatCallToAction(value) {
@@ -1132,6 +1187,30 @@ function getLiveAdsVisibleAds(baseVisibleAds) {
       return matchesStatus && matchesFormat;
     })
     .sort(compareLiveAds);
+}
+
+function getDashboardSpotlightAds(visibleAds, limit = 6) {
+  const activeAds = visibleAds.filter(
+    (ad) => getCurrentStatus(ad) === 'ACTIVE' && hasCurrentWindowActivity(ad)
+  );
+  const pool = activeAds.length ? activeAds : visibleAds.filter((ad) => hasCurrentWindowActivity(ad));
+
+  return [...pool]
+    .sort((left, right) => {
+      const scoreGap = getPerformanceScore(right) - getPerformanceScore(left);
+      if (scoreGap) {
+        return scoreGap;
+      }
+
+      const rightMetrics = currentMetricsForRange(right);
+      const leftMetrics = currentMetricsForRange(left);
+      return (
+        rightMetrics.sales - leftMetrics.sales ||
+        rightMetrics.spend - leftMetrics.spend ||
+        left.name.localeCompare(right.name)
+      );
+    })
+    .slice(0, limit);
 }
 
 function currentWindowSummary() {
@@ -1960,6 +2039,84 @@ function renderMetrics(visibleAds) {
         </article>
       `
     )
+    .join('');
+}
+
+function renderDashboardSpotlight(visibleAds) {
+  const spotlightAds = getDashboardSpotlightAds(visibleAds, 6);
+  const activeCount = visibleAds.filter((ad) => getCurrentStatus(ad) === 'ACTIVE' && hasCurrentWindowActivity(ad)).length;
+
+  if (elements.dashboardSpotlightSummary) {
+    elements.dashboardSpotlightSummary.textContent = `${spotlightAds.length} of ${formatNumber(activeCount || visibleAds.length)} live ads • ranked by performance score • ${currentWindowSummary()}`;
+  }
+
+  if (!elements.dashboardSpotlightGrid) {
+    return;
+  }
+
+  if (!spotlightAds.length) {
+    elements.dashboardSpotlightGrid.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">No live ads in view</p>
+        <h4>The spotlight grid will populate when active ads match the current filters.</h4>
+        <p>Adjust the search, campaign, tier, or reporting range to bring live ads back into the dashboard spotlight.</p>
+      </div>
+    `;
+    return;
+  }
+
+  elements.dashboardSpotlightGrid.innerHTML = spotlightAds
+    .map((ad, index) => {
+      const metrics = currentMetricsForRange(ad);
+      const preview = ad.mediaPreviewUrl
+        ? `<img src="${escapeHtml(ad.mediaPreviewUrl)}" alt="${escapeHtml(ad.name)} thumbnail" loading="lazy" />`
+        : `<div class="dashboard-spotlight-fallback">${escapeHtml(ad.format || 'Ad')}</div>`;
+      const runtimeLabel = formatRuntimeLabel(ad.createdAt);
+      const launchLabel = formatShortDate(ad.createdAt);
+      const placementLabel = ad.adsetName ? `${ad.campaign} • ${ad.adsetName}` : ad.campaign;
+
+      return `
+        <article class="dashboard-spotlight-card">
+          <div class="dashboard-spotlight-thumb">
+            ${preview}
+            <span class="dashboard-spotlight-rank">Top ${index + 1}</span>
+          </div>
+          <div class="dashboard-spotlight-body">
+            <div class="dashboard-spotlight-head">
+              <div>
+                <h4>${escapeHtml(ad.name)}</h4>
+                <p class="dashboard-spotlight-placement">${escapeHtml(placementLabel)}</p>
+              </div>
+              <span class="tier-badge tier-${getCurrentTier(ad).toLowerCase()}">${escapeHtml(getCurrentTier(ad))}</span>
+            </div>
+
+            <div class="dashboard-spotlight-meta">
+              <span class="metric-pill">${escapeHtml(runtimeLabel)}</span>
+              ${launchLabel ? `<span class="metric-pill">Launched ${escapeHtml(launchLabel)}</span>` : ''}
+            </div>
+
+            <div class="dashboard-spotlight-stats">
+              <div class="dashboard-spotlight-stat">
+                <span class="small-label">Sales</span>
+                <strong>${escapeHtml(formatCurrency(metrics.sales))}</strong>
+              </div>
+              <div class="dashboard-spotlight-stat">
+                <span class="small-label">Spend</span>
+                <strong>${escapeHtml(formatCurrency(metrics.spend))}</strong>
+              </div>
+              <div class="dashboard-spotlight-stat">
+                <span class="small-label">ROAS</span>
+                <strong>${escapeHtml(formatNumber(metrics.roas, 2))}x</strong>
+              </div>
+              <div class="dashboard-spotlight-stat">
+                <span class="small-label">CPA</span>
+                <strong>${metrics.purchases ? escapeHtml(formatCurrency(metrics.cpa, 2)) : 'No purchases'}</strong>
+              </div>
+            </div>
+          </div>
+        </article>
+      `;
+    })
     .join('');
 }
 
@@ -2848,6 +3005,7 @@ function render() {
   renderSelectedAdSelectors(visibleAds, selectedAd);
   renderLiveAdsControls(visibleAds);
   renderConnection(visibleAds);
+  renderDashboardSpotlight(visibleAds);
   renderMetrics(visibleAds);
   renderTable(liveAds);
   renderDemographics(visibleAds);

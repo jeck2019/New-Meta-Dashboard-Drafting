@@ -77,6 +77,7 @@ OUTBOUND_CLICK_ACTIONS = [
 ADS_FIELDS_FULL = ','.join([
     'id',
     'name',
+    'created_time',
     'effective_status',
     'campaign{id,name}',
     'adset{id,name}',
@@ -86,6 +87,7 @@ ADS_FIELDS_FULL = ','.join([
 ADS_FIELDS_FALLBACK = ','.join([
     'id',
     'name',
+    'created_time',
     'effective_status',
     'creative{id,name}',
 ])
@@ -1492,7 +1494,9 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
             payload_ads.append({
                 'id': ad_id,
                 'name': ad.get('name', 'Untitled ad'),
+                'createdAt': ad.get('created_time', ''),
                 'campaign': (ad.get('campaign') or {}).get('name') or 'Unmapped campaign',
+                'adsetName': (ad.get('adset') or {}).get('name') or '',
                 'currentStatus': ad.get('effective_status', 'UNKNOWN'),
                 'creativeId': creative_fields['creativeId'],
                 'product': infer_product((ad.get('campaign') or {}).get('name', ''), landing_page),
