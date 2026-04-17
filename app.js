@@ -1069,6 +1069,10 @@ function formatCallToAction(value) {
   return value ? titleCase(value) : 'Not mapped';
 }
 
+function isDisplayZeroCurrency(value) {
+  return Math.round(Number(value || 0)) === 0;
+}
+
 function formatAlertMetricValue(metricKey, value) {
   if (metricKey === 'sales' || metricKey === 'spend') {
     return formatCurrency(value);
@@ -1369,7 +1373,7 @@ function buildDashboardAlerts(visibleAds) {
     : candidateAds
         .map((ad) => {
           const metrics = currentMetricsForRange(ad);
-          if (!metrics.spend && !metrics.sales) {
+          if (isDisplayZeroCurrency(metrics.spend) && isDisplayZeroCurrency(metrics.sales)) {
             return null;
           }
 
