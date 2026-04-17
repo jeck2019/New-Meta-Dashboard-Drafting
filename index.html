@@ -14,7 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260417d" />
+    <link rel="stylesheet" href="./styles.css?v=20260417e" />
   </head>
   <body>
     <div class="app-shell">
@@ -30,6 +30,7 @@
         <nav class="nav-links">
           <button class="nav-link is-active" data-page="dashboard" aria-current="page">Dashboard</button>
           <button class="nav-link" data-page="live-ads">Live Ads</button>
+          <button class="nav-link" data-page="demographics">Demographics</button>
           <button class="nav-link" data-page="ad-content">Ad Content</button>
           <button class="nav-link" data-page="details">Details</button>
           <button class="nav-link" data-page="recommendations">Recommendations</button>
@@ -204,6 +205,73 @@
             </section>
           </section>
 
+          <section class="workspace-page" id="page-demographics" data-page="demographics" hidden>
+            <section class="single-panel-grid">
+              <article class="panel" id="demographics-overview-panel">
+                <div class="panel-head panel-head-interactive">
+                  <div>
+                    <p class="panel-kicker">Audience breakdowns</p>
+                    <h3>Meta demographics</h3>
+                  </div>
+                  <p class="panel-subtle" id="demographics-summary"></p>
+                </div>
+                <div class="demographics-overview" id="demographics-overview"></div>
+              </article>
+            </section>
+
+            <section class="demographics-grid">
+              <article class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Age</p>
+                    <h3>Age ranges</h3>
+                  </div>
+                </div>
+                <div id="demographics-age"></div>
+              </article>
+
+              <article class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Gender</p>
+                    <h3>Male vs female</h3>
+                  </div>
+                </div>
+                <div id="demographics-gender"></div>
+              </article>
+
+              <article class="panel panel-span-2">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Device</p>
+                    <h3>Device platform</h3>
+                  </div>
+                </div>
+                <div id="demographics-device"></div>
+              </article>
+
+              <article class="panel panel-span-2">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Region</p>
+                    <h3>Country performance</h3>
+                  </div>
+                </div>
+                <div id="demographics-country"></div>
+              </article>
+
+              <article class="panel panel-span-2">
+                <div class="panel-head">
+                  <div>
+                    <p class="panel-kicker">Region</p>
+                    <h3>State and region performance</h3>
+                  </div>
+                </div>
+                <div id="demographics-region"></div>
+              </article>
+            </section>
+          </section>
+
           <section class="workspace-page" id="page-ad-content" data-page="ad-content" hidden>
             <section class="content-grid">
               <article class="panel" id="content-panel">
@@ -275,6 +343,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=20260417d"></script>
+    <script src="./app.js?v=20260417e"></script>
   </body>
 </html>

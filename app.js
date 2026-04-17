@@ -19,7 +19,7 @@ const COMPARE_LABEL = {
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const RESUME_REFRESH_THRESHOLD_MS = 60 * 1000;
 const AUTO_REFRESH_COPY = 'Auto-refreshing every 5 minutes while this tab is open.';
-const VALID_PAGES = ['dashboard', 'live-ads', 'ad-content', 'details', 'recommendations'];
+const VALID_PAGES = ['dashboard', 'live-ads', 'demographics', 'ad-content', 'details', 'recommendations'];
 const LIVE_AD_SORT_OPTIONS = [
   { value: 'performance', label: 'Performance score' },
   { value: 'spend', label: 'Spend' },
@@ -34,6 +34,14 @@ const LIVE_AD_SORT_OPTIONS = [
   { value: 'hookRate', label: 'Hook rate' },
   { value: 'quality', label: 'Quality score' },
 ];
+const DEMOGRAPHIC_DIMENSIONS = ['age', 'gender', 'device', 'country', 'region'];
+const AGE_BUCKET_ORDER = ['13-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+', 'Unknown'];
+const GENDER_BUCKET_ORDER = ['Male', 'Female', 'Other'];
+const DEVICE_BUCKET_ORDER = ['Mobile', 'Desktop', 'Other'];
+const COUNTRY_NAMES =
+  typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function'
+    ? new Intl.DisplayNames(['en'], { type: 'region' })
+    : null;
 
 const ZERO_METRICS = {
   spend: 0,
@@ -448,6 +456,13 @@ const elements = {
   landingLeaderboard: document.querySelector('#landing-leaderboard'),
   detailContent: document.querySelector('#detail-content'),
   recommendationsList: document.querySelector('#recommendations-list'),
+  demographicsSummary: document.querySelector('#demographics-summary'),
+  demographicsOverview: document.querySelector('#demographics-overview'),
+  demographicsAge: document.querySelector('#demographics-age'),
+  demographicsGender: document.querySelector('#demographics-gender'),
+  demographicsDevice: document.querySelector('#demographics-device'),
+  demographicsCountry: document.querySelector('#demographics-country'),
+  demographicsRegion: document.querySelector('#demographics-region'),
   searchInput: document.querySelector('#search-input'),
   campaignFilter: document.querySelector('#campaign-filter'),
   tierFilter: document.querySelector('#tier-filter'),
@@ -620,9 +635,40 @@ function expandTrend(seedValues, targetLength) {
   return values.slice(0, targetLength);
 }
 
+function blankDemographics() {
+  return Object.fromEntries(
+    ['7d', '30d', 'custom'].map((rangeKey) => [
+      rangeKey,
+      Object.fromEntries(DEMOGRAPHIC_DIMENSIONS.map((dimension) => [dimension, []])),
+    ])
+  );
+}
+
+function normalizeDemographicsPayload(rawDemographics = {}) {
+  const output = blankDemographics();
+
+  Object.entries(rawDemographics || {}).forEach(([rangeKey, dimensionMap]) => {
+    output[rangeKey] = {
+      ...output[rangeKey],
+      ...Object.fromEntries(
+        Object.entries(dimensionMap || {}).map(([dimension, rows]) => [
+          dimension,
+          (rows || []).map((row) => ({
+            ...row,
+            metrics: withDerived(row.metrics || ZERO_METRICS),
+          })),
+        ])
+      ),
+    };
+  });
+
+  return output;
+}
+
 function normalizePayload(payload) {
   return {
     ...payload,
+    demographics: normalizeDemographicsPayload(payload.demographics),
     ads: (payload.ads || []).map((ad) => {
       const metrics = Object.fromEntries(
         Object.entries(ad.metrics || {}).map(([key, value]) => [key, withDerived(value)])
@@ -648,6 +694,7 @@ function createMockPayload(errorMessage, customWindow = null) {
   const payload = clone(MOCK_PAYLOAD);
   payload.generatedAt = new Date().toISOString();
   payload.error = errorMessage || '';
+  payload.demographics = blankDemographics();
 
   if (customWindow?.since && customWindow?.until) {
     payload.periods.custom = customWindow;
@@ -1141,6 +1188,236 @@ function renderLiveAdsControls(baseVisibleAds) {
   elements.liveAdsSortDirection.value = state.liveAdsSortDirection;
   elements.liveAdsStatusFilter.value = state.liveAdsStatus;
   elements.liveAdsFormatFilter.value = state.liveAdsFormat;
+}
+
+function currentDemographicsForRange() {
+  return state.payload?.demographics?.[state.range] || {};
+}
+
+function normalizeDemographicBucket(dimension, bucket) {
+  const raw = String(bucket || '').trim();
+  const lowered = raw.toLowerCase();
+
+  if (!raw || lowered === 'unknown') {
+    return 'Unknown';
+  }
+
+  if (dimension === 'gender') {
+    if (lowered === 'male') {
+      return 'Male';
+    }
+    if (lowered === 'female') {
+      return 'Female';
+    }
+    return 'Other';
+  }
+
+  if (dimension === 'device') {
+    if (lowered === 'desktop') {
+      return 'Desktop';
+    }
+    if (lowered.startsWith('mobile')) {
+      return 'Mobile';
+    }
+    return 'Other';
+  }
+
+  if (dimension === 'country') {
+    const code = raw.toUpperCase();
+    if (/^[A-Z]{2}$/.test(code) && COUNTRY_NAMES) {
+      return COUNTRY_NAMES.of(code) || code;
+    }
+    return raw;
+  }
+
+  return raw;
+}
+
+function demographicOrderIndex(dimension, label) {
+  if (dimension === 'age') {
+    return AGE_BUCKET_ORDER.indexOf(label);
+  }
+  if (dimension === 'gender') {
+    return GENDER_BUCKET_ORDER.indexOf(label);
+  }
+  if (dimension === 'device') {
+    return DEVICE_BUCKET_ORDER.indexOf(label);
+  }
+  return -1;
+}
+
+function compareDemographicEntries(dimension, left, right) {
+  if (dimension === 'country' || dimension === 'region') {
+    if (left.metrics.spend !== right.metrics.spend) {
+      return right.metrics.spend - left.metrics.spend;
+    }
+    if (left.metrics.sales !== right.metrics.sales) {
+      return right.metrics.sales - left.metrics.sales;
+    }
+    return left.label.localeCompare(right.label);
+  }
+
+  const leftIndex = demographicOrderIndex(dimension, left.label);
+  const rightIndex = demographicOrderIndex(dimension, right.label);
+  if (leftIndex !== rightIndex) {
+    if (leftIndex === -1) {
+      return 1;
+    }
+    if (rightIndex === -1) {
+      return -1;
+    }
+    return leftIndex - rightIndex;
+  }
+
+  if (left.metrics.spend !== right.metrics.spend) {
+    return right.metrics.spend - left.metrics.spend;
+  }
+
+  return left.label.localeCompare(right.label);
+}
+
+function aggregateDemographicRows(rows, visibleAds, dimension) {
+  const visibleAdIds = new Set((visibleAds || []).map((ad) => ad.id));
+  const grouped = new Map();
+
+  (rows || []).forEach((row) => {
+    if (!visibleAdIds.has(row.adId)) {
+      return;
+    }
+
+    const label = normalizeDemographicBucket(dimension, row.bucket);
+    const key = `${dimension}:${label}`;
+    const metrics = row.metrics || withDerived();
+    const entry =
+      grouped.get(key) || {
+        label,
+        totals: { ...ZERO_METRICS },
+        weightedImpressions: 0,
+        totalReach: 0,
+        adIds: new Set(),
+      };
+
+    Object.keys(ZERO_METRICS).forEach((field) => {
+      entry.totals[field] += Number(metrics[field] || 0);
+    });
+    entry.weightedImpressions += Number(metrics.reach || 0) * Number(metrics.frequency || 0);
+    entry.totalReach += Number(metrics.reach || 0);
+    entry.adIds.add(row.adId);
+    grouped.set(key, entry);
+  });
+
+  return [...grouped.values()]
+    .map((entry) => ({
+      label: entry.label,
+      metrics: withDerived({
+        ...entry.totals,
+        frequency: entry.totalReach ? entry.weightedImpressions / entry.totalReach : 0,
+      }),
+      adCount: entry.adIds.size,
+    }))
+    .sort((left, right) => compareDemographicEntries(dimension, left, right));
+}
+
+function renderDemographicTable(target, entries, segmentLabel, emptyHeading) {
+  if (!target) {
+    return;
+  }
+
+  if (!entries.length) {
+    target.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">No breakdown data</p>
+        <h4>${escapeHtml(emptyHeading)}</h4>
+        <p>Meta did not return rows for this filtered view and reporting window yet.</p>
+      </div>
+    `;
+    return;
+  }
+
+  target.innerHTML = `
+    <div class="table-shell demographics-table-shell">
+      <table>
+        <thead>
+          <tr>
+            <th>${escapeHtml(segmentLabel)}</th>
+            <th>Spend</th>
+            <th>Sales</th>
+            <th>ROAS</th>
+            <th>CPA</th>
+            <th>Reach</th>
+            <th>Clicks</th>
+            <th>Freq.</th>
+            <th>Orders</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries
+            .map((entry) => {
+              const metrics = entry.metrics;
+              return `
+                <tr>
+                  <td>
+                    <div class="ad-meta">
+                      <span class="ad-title">${escapeHtml(entry.label)}</span>
+                      <span class="ad-subtitle">${escapeHtml(formatNumber(entry.adCount))} ads in current view</span>
+                    </div>
+                  </td>
+                  <td>${escapeHtml(formatCurrency(metrics.spend))}</td>
+                  <td>${escapeHtml(formatCurrency(metrics.sales))}</td>
+                  <td>${escapeHtml(formatNumber(metrics.roas, 2))}x</td>
+                  <td>${metrics.purchases ? escapeHtml(formatCurrency(metrics.cpa, 2)) : 'No purchases'}</td>
+                  <td>${escapeHtml(formatNumber(metrics.reach))}</td>
+                  <td>${escapeHtml(formatNumber(metrics.clicks))}</td>
+                  <td>${escapeHtml(formatNumber(metrics.frequency, 2))}</td>
+                  <td>${escapeHtml(formatNumber(metrics.purchases))}</td>
+                </tr>
+              `;
+            })
+            .join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderDemographics(visibleAds) {
+  const demographics = currentDemographicsForRange();
+  const ageEntries = aggregateDemographicRows(demographics.age, visibleAds, 'age');
+  const genderEntries = aggregateDemographicRows(demographics.gender, visibleAds, 'gender');
+  const deviceEntries = aggregateDemographicRows(demographics.device, visibleAds, 'device');
+  const countryEntries = aggregateDemographicRows(demographics.country, visibleAds, 'country');
+  const regionEntries = aggregateDemographicRows(demographics.region, visibleAds, 'region');
+
+  if (elements.demographicsSummary) {
+    elements.demographicsSummary.textContent = `${visibleAds.length} filtered ads • ${currentWindowSummary()} • sourced from Meta Insights breakdowns`;
+  }
+
+  if (elements.demographicsOverview) {
+    const overviewItems = [
+      { label: 'Age buckets', value: ageEntries.length },
+      { label: 'Gender buckets', value: genderEntries.length },
+      { label: 'Device buckets', value: deviceEntries.length },
+      { label: 'Countries', value: countryEntries.length },
+      { label: 'States / regions', value: regionEntries.length },
+    ];
+
+    elements.demographicsOverview.innerHTML = overviewItems
+      .map(
+        (item) => `
+          <div class="overview-chip">
+            <span class="overview-chip-label">${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(formatNumber(item.value))}</strong>
+          </div>
+        `
+      )
+      .join('');
+  }
+
+  renderDemographicTable(elements.demographicsAge, ageEntries, 'Age range', 'No age breakdown rows are available yet.');
+  renderDemographicTable(elements.demographicsGender, genderEntries, 'Gender', 'No gender breakdown rows are available yet.');
+  renderDemographicTable(elements.demographicsDevice, deviceEntries, 'Device', 'No device breakdown rows are available yet.');
+  renderDemographicTable(elements.demographicsCountry, countryEntries, 'Country', 'No country breakdown rows are available yet.');
+  renderDemographicTable(elements.demographicsRegion, regionEntries, 'State / region', 'No state or region rows are available yet.');
 }
 
 function renderConnection(visibleAds) {
@@ -1897,6 +2174,7 @@ function render() {
   renderConnection(visibleAds);
   renderMetrics(visibleAds);
   renderTable(liveAds);
+  renderDemographics(visibleAds);
   renderLeaderboards(visibleAds);
   renderContentLibrary(visibleAds);
   renderDetail(selectedAd);

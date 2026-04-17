@@ -139,6 +139,13 @@ DAILY_INSIGHTS_FIELDS_FULL = ','.join([
 ])
 SUPABASE_CHUNK_SIZE = 200
 PRIMARY_RANGE_KEYS = ('7d', '30d', 'custom')
+DEMOGRAPHIC_BREAKDOWNS = {
+    'age': 'age',
+    'gender': 'gender',
+    'device': 'device_platform',
+    'country': 'country',
+    'region': 'region',
+}
 
 
 class MetaAPIError(Exception):
@@ -779,6 +786,57 @@ def fetch_window_insights(token, account_id, window):
     return merge_metrics_by_ad(rows)
 
 
+def fetch_breakdown_insights(token, account_id, window, breakdown):
+    params = {
+        'level': 'ad',
+        'time_range': json.dumps(window),
+        'limit': 500,
+        'fields': INSIGHTS_FIELDS_FULL,
+        'breakdowns': breakdown,
+        'use_account_attribution_setting': 'true',
+    }
+    try:
+        rows = meta_get_paginated(f'{account_id}/insights', params, token, limit_pages=80)
+    except MetaAPIError:
+        rows = meta_get_paginated(
+            f'{account_id}/insights',
+            {**params, 'fields': INSIGHTS_FIELDS_FALLBACK},
+            token,
+            limit_pages=80,
+        )
+
+    normalized = []
+    for row in rows:
+        ad_id = row.get('ad_id')
+        if not ad_id:
+            continue
+        normalized.append({
+            'adId': ad_id,
+            'bucket': row.get(breakdown, '') or 'unknown',
+            'metrics': normalize_insight(row),
+        })
+    return normalized
+
+
+def fetch_demographic_breakdowns(token, account_id, windows):
+    demographics = {}
+    for range_key in PRIMARY_RANGE_KEYS:
+        if range_key not in windows:
+            continue
+        demographics[range_key] = {}
+        for dimension, breakdown in DEMOGRAPHIC_BREAKDOWNS.items():
+            try:
+                demographics[range_key][dimension] = fetch_breakdown_insights(
+                    token,
+                    account_id,
+                    windows[range_key],
+                    breakdown,
+                )
+            except MetaAPIError:
+                demographics[range_key][dimension] = []
+    return demographics
+
+
 def fetch_video_metadata(token, video_id):
     if not video_id:
         return {}
@@ -1382,6 +1440,7 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
     ads_rows = fetch_account_ads(token, account_id)
     ads_by_id = {row.get('id'): row for row in ads_rows if row.get('id')}
     insights_by_window = {name: fetch_window_insights(token, account_id, window) for name, window in windows.items()}
+    demographics = fetch_demographic_breakdowns(token, account_id, windows)
     daily_sales_series = fetch_daily_sales_series(token, account_id, windows['30d'])
     daily_metric_rows = []
     if 'custom' in windows:
@@ -1484,6 +1543,7 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
         },
         'periods': windows,
         'ads': payload_ads,
+        'demographics': demographics,
         'storage': storage_state,
     }
 
