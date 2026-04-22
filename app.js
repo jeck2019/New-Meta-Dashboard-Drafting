@@ -2742,6 +2742,14 @@ function optimizationEventLabel(eventType) {
   return 'Ad updated';
 }
 
+function toggleOptimizationCampaign(campaignName) {
+  state.expandedOptimizationCampaigns = {
+    ...state.expandedOptimizationCampaigns,
+    [campaignName]: !state.expandedOptimizationCampaigns[campaignName],
+  };
+  render();
+}
+
 function renderOptimizationLog(liveAds) {
   if (!elements.optimizationLogList || !elements.optimizationLogSummary) {
     return;
@@ -2782,6 +2790,7 @@ function renderOptimizationLog(liveAds) {
   elements.optimizationLogList.innerHTML = Array.from(groupedLogs.entries())
     .map(([campaignName, logs]) => {
       const expanded = Boolean(state.expandedOptimizationCampaigns[campaignName]);
+      const campaignKey = encodeURIComponent(campaignName);
       const updatedCount = logs.filter((log) => log.eventType === 'updated').length;
       const cutCount = logs.filter((log) => log.eventType === 'cut').length;
       const replacementCount = logs.filter((log) => log.eventType === 'new_replacement').length;
@@ -2792,7 +2801,7 @@ function renderOptimizationLog(liveAds) {
           <button
             type="button"
             class="optimization-log-campaign-toggle"
-            data-optimization-campaign="${escapeHtml(campaignName)}"
+            data-optimization-campaign-key="${campaignKey}"
             aria-expanded="${expanded ? 'true' : 'false'}"
           >
             <div>
@@ -2877,6 +2886,14 @@ function renderOptimizationLog(liveAds) {
       `;
     })
     .join('');
+
+  elements.optimizationLogList
+    .querySelectorAll('[data-optimization-campaign-key]')
+    .forEach((button) => {
+      button.addEventListener('click', () => {
+        toggleOptimizationCampaign(decodeURIComponent(button.dataset.optimizationCampaignKey || ''));
+      });
+    });
 }
 
 function leaderboardItems(items, emptyLabel) {
@@ -3913,21 +3930,6 @@ function bindEvents() {
     state.contentCollapsed = !state.contentCollapsed;
     renderContentPanelState();
   });
-
-  if (elements.optimizationLogList) {
-    elements.optimizationLogList.addEventListener('click', (event) => {
-      const toggle = event.target.closest('[data-optimization-campaign]');
-      if (!toggle) {
-        return;
-      }
-      const campaignName = toggle.dataset.optimizationCampaign;
-      state.expandedOptimizationCampaigns = {
-        ...state.expandedOptimizationCampaigns,
-        [campaignName]: !state.expandedOptimizationCampaigns[campaignName],
-      };
-      render();
-    });
-  }
 
   if (elements.alertThresholdsTable) {
     elements.alertThresholdsTable.addEventListener('change', (event) => {
