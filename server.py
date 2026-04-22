@@ -1010,6 +1010,125 @@ def title_case_status(value):
     return compact_text(value).replace('_', ' ').title()
 
 
+def shorten_text(value, limit=72):
+    text = compact_text(value)
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + '…'
+
+
+def format_cta_value(value):
+    return title_case_status(value).replace(' ', ' ') if compact_text(value) else ''
+
+
+def format_change_message(label, previous_value, current_value, formatter=None):
+    before = compact_text(previous_value)
+    after = compact_text(current_value)
+    if formatter:
+        before = formatter(before)
+        after = formatter(after)
+    if not before and after:
+        return f"{label} added: “{shorten_text(after)}”"
+    if before and not after:
+        return f"{label} removed"
+    if before and after:
+        return f"{label} changed from “{shorten_text(before)}” to “{shorten_text(after)}”"
+    return ''
+
+
+def describe_media_type(row):
+    video_id = compact_text(row.get('video_id'))
+    image_hash = compact_text(row.get('image_hash'))
+    if video_id:
+        length_seconds = to_float(row.get('media_length_seconds'))
+        if length_seconds > 0:
+            return f"video asset ({format_number(length_seconds, 0)}s cut)"
+        return 'video asset'
+    if image_hash:
+        return 'static image asset'
+    return 'creative asset'
+
+
+def summarize_name_list(values, limit=3):
+    names = []
+    for value in values or []:
+        text = compact_text(value)
+        if text and text not in names:
+            names.append(text)
+    if not names:
+        return ''
+    if len(names) <= limit:
+        return ', '.join(names)
+    visible = ', '.join(names[:limit])
+    remainder = len(names) - limit
+    return f"{visible} (+{remainder} more)"
+
+
+def describe_media_change(current_row, previous_row):
+    current_video = compact_text(current_row.get('video_id'))
+    previous_video = compact_text(previous_row.get('video_id'))
+    current_image = compact_text(current_row.get('image_hash'))
+    previous_image = compact_text(previous_row.get('image_hash'))
+    current_preview = compact_text(current_row.get('media_preview_url'))
+    previous_preview = compact_text(previous_row.get('media_preview_url'))
+    current_source = compact_text(current_row.get('media_source_url'))
+    previous_source = compact_text(previous_row.get('media_source_url'))
+    current_length = to_float(current_row.get('media_length_seconds'))
+    previous_length = to_float(previous_row.get('media_length_seconds'))
+
+    if current_video and previous_video and current_video != previous_video:
+        if current_length > 0 and previous_length > 0:
+            return f"Video asset swapped from a {format_number(previous_length, 0)}s cut to a {format_number(current_length, 0)}s cut"
+        if current_length > 0:
+            return f"Video asset swapped for a new {format_number(current_length, 0)}s cut"
+        return 'Video asset swapped for a new edit'
+    if current_image and previous_image and current_image != previous_image:
+        return 'Static image asset replaced with a new creative image'
+    if previous_video and current_image and not current_video:
+        return 'Video asset replaced with a static image'
+    if previous_image and current_video and not previous_video:
+        if current_length > 0:
+            return f"Static image replaced with a {format_number(current_length, 0)}s video cut"
+        return 'Static image replaced with a video asset'
+    source_changed = bool(current_source and current_source != previous_source)
+    preview_changed = bool(current_preview and current_preview != previous_preview)
+    if source_changed or preview_changed:
+        if current_video or previous_video:
+            if source_changed and preview_changed:
+                return 'Video file and thumbnail frame refreshed on the creative'
+            if source_changed:
+                return 'Video file refreshed with a new export'
+            return 'Thumbnail frame refreshed on the existing video'
+        if source_changed and preview_changed:
+            return 'Image file and preview crop refreshed on the creative'
+        if source_changed:
+            return 'Image file refreshed with a new export'
+        return 'Preview crop refreshed on the existing image'
+    return ''
+
+
+def describe_new_snapshot(row):
+    changes = [f"Uploaded as a new {describe_media_type(row)} into this campaign"]
+    headline = compact_text(row.get('headline'))
+    if headline:
+        changes.append(f"Launch headline: “{shorten_text(headline)}”")
+    primary_text = compact_text(row.get('primary_text'))
+    if primary_text:
+        changes.append(f"Launch primary text: “{shorten_text(primary_text)}”")
+    call_to_action = format_cta_value(row.get('call_to_action'))
+    if call_to_action:
+        changes.append(f"Launch CTA: {call_to_action}")
+    return changes
+
+
+def describe_removed_snapshot(row):
+    changes = [f"Cut entirely from the campaign after its last {describe_media_type(row)} version"]
+    headline = compact_text(row.get('headline'))
+    if headline:
+        changes.append(f"Last headline before removal: “{shorten_text(headline)}”")
+    return changes
+
+
 def describe_snapshot_changes(current_row, previous_row):
     changes = []
 
@@ -1017,28 +1136,33 @@ def describe_snapshot_changes(current_row, previous_row):
         return compact_text(current_row.get(field)) != compact_text(previous_row.get(field))
 
     if changed('creative_name'):
-        changes.append('Creative asset updated')
-
-    media_changed = any(
-        compact_text(current_row.get(field)) != compact_text(previous_row.get(field))
-        for field in ('media_source_url', 'media_preview_url', 'video_id', 'image_hash')
-    )
-    if media_changed:
-        changes.append('Media asset updated')
-
-    field_messages = [
-        ('headline', 'Headline updated'),
-        ('primary_text', 'Primary text updated'),
-        ('description', 'Description updated'),
-        ('hook', 'Hook updated'),
-        ('call_to_action', 'Call to action updated'),
-    ]
-    for field, message in field_messages:
-        if changed(field):
+        message = format_change_message('Creative name', previous_row.get('creative_name'), current_row.get('creative_name'))
+        if message:
             changes.append(message)
 
+    media_change = describe_media_change(current_row, previous_row)
+    if media_change:
+        changes.append(media_change)
+
+    field_messages = [
+        ('headline', 'Headline', None),
+        ('primary_text', 'Primary text', None),
+        ('description', 'Description', None),
+        ('hook', 'Hook', None),
+        ('call_to_action', 'Call to action', format_cta_value),
+    ]
+    for field, label, formatter in field_messages:
+        if changed(field):
+            message = format_change_message(label, previous_row.get(field), current_row.get(field), formatter=formatter)
+            if message:
+                changes.append(message)
+
     if changed('landing_page') or changed('destination_url'):
-        changes.append('Landing destination updated')
+        target = compact_text(current_row.get('landing_page')) or compact_text(current_row.get('destination_url'))
+        previous_target = compact_text(previous_row.get('landing_page')) or compact_text(previous_row.get('destination_url'))
+        message = format_change_message('Landing destination', previous_target, target)
+        if message:
+            changes.append(message)
 
     if changed('current_status'):
         changes.append(f"Delivery status changed to {title_case_status(current_row.get('current_status'))}")
@@ -1110,12 +1234,21 @@ def build_impact_summary(before_metrics, after_metrics, range_key):
     elif after_purchases < before_purchases:
         score -= 1
 
-    impact_label = 'positive' if score > 0 else 'negative'
+    if score > 0:
+        impact_label = 'positive'
+    elif score < 0:
+        impact_label = 'negative'
+    else:
+        impact_label = 'neutral'
     if not reason_parts:
         if impact_label == 'positive':
             reason_parts.append(f"Efficiency improved in the {range_display_label(range_key)} window after the change")
-        else:
+        elif impact_label == 'negative':
             reason_parts.append(f"Efficiency weakened in the {range_display_label(range_key)} window after the change")
+        elif after_sales <= 0 and after_purchases <= 0 and after_roas <= 0 and after_cpa <= 0:
+            reason_parts.append(f"Not enough post-change conversion data is available yet in the {range_display_label(range_key)} window")
+        else:
+            reason_parts.append(f"Performance stayed largely flat in the {range_display_label(range_key)} window after the change")
 
     return {
         'label': impact_label,
@@ -1138,12 +1271,31 @@ def build_impact_summary(before_metrics, after_metrics, range_key):
     }
 
 
+def aggregate_metric_row_group(rows):
+    totals = {
+        'spend': 0.0,
+        'sales': 0.0,
+        'purchases': 0.0,
+    }
+    for row in rows:
+        totals['spend'] += to_float(row.get('spend'))
+        totals['sales'] += to_float(row.get('sales'))
+        totals['purchases'] += to_float(row.get('purchases'))
+    totals['roas'] = totals['sales'] / totals['spend'] if totals['spend'] else 0.0
+    totals['cpa'] = totals['spend'] / totals['purchases'] if totals['purchases'] else 0.0
+    return totals
+
+
 def build_optimization_logs(settings, payload_ads):
     if not supabase_configured(settings):
         return []
 
-    ad_ids = [ad.get('id') for ad in payload_ads if ad.get('id')]
-    if not ad_ids:
+    relevant_campaigns = {
+        compact_text(ad.get('campaign'))
+        for ad in payload_ads
+        if compact_text(ad.get('campaign'))
+    }
+    if not relevant_campaigns:
         return []
 
     recent_sync_runs = supabase_select_rows(
@@ -1153,12 +1305,14 @@ def build_optimization_logs(settings, payload_ads):
             'select': 'id,generated_at',
             'sync_status': 'eq.completed',
             'order': 'generated_at.desc',
-            'limit': '6',
+            'limit': '2',
         },
     )
     sync_run_ids = [row.get('id') for row in recent_sync_runs if row.get('id')]
     if len(sync_run_ids) < 2:
         return []
+    latest_sync_id, previous_sync_id = sync_run_ids[:2]
+    latest_sync_at = next((row.get('generated_at') for row in recent_sync_runs if row.get('id') == latest_sync_id), None)
 
     snapshot_rows = supabase_select_rows(
         settings,
@@ -1171,6 +1325,7 @@ def build_optimization_logs(settings, payload_ads):
                 'ad_name',
                 'campaign_name',
                 'current_status',
+                'ad_format',
                 'creative_name',
                 'headline',
                 'primary_text',
@@ -1190,80 +1345,143 @@ def build_optimization_logs(settings, payload_ads):
                 'cta_variants',
             ]),
             'sync_run_id': f"in.({','.join(sync_run_ids)})",
-            'ad_id': f"in.({','.join(ad_ids)})",
             'order': 'generated_at.desc',
-            'limit': str(max(300, len(ad_ids) * len(sync_run_ids))),
+            'limit': str(max(1200, len(relevant_campaigns) * 250)),
         },
     )
-
-    grouped_rows = {}
-    for row in snapshot_rows:
-        grouped_rows.setdefault(row.get('ad_id'), []).append(row)
-
-    latest_changes = []
-    for ad_id, rows in grouped_rows.items():
-        for index in range(len(rows) - 1):
-            current_row = rows[index]
-            previous_row = rows[index + 1]
-            changes = describe_snapshot_changes(current_row, previous_row)
-            if not changes:
-                continue
-            latest_changes.append({
-                'adId': ad_id,
-                'adName': current_row.get('ad_name', ''),
-                'campaignName': current_row.get('campaign_name', ''),
-                'changedAt': current_row.get('generated_at'),
-                'syncRunId': current_row.get('sync_run_id'),
-                'previousSyncRunId': previous_row.get('sync_run_id'),
-                'changes': changes,
-            })
-            break
-
-    if not latest_changes:
+    snapshot_rows = [
+        row for row in snapshot_rows
+        if compact_text(row.get('campaign_name')) in relevant_campaigns
+    ]
+    if not snapshot_rows:
         return []
 
-    sync_ids = sorted(
-        {
-            value
-            for change in latest_changes
-            for value in (change['syncRunId'], change['previousSyncRunId'])
-            if value
-        }
-    )
+    latest_snapshot_by_campaign = {}
+    previous_snapshot_by_campaign = {}
+    for row in snapshot_rows:
+        campaign_name = compact_text(row.get('campaign_name'))
+        ad_id = compact_text(row.get('ad_id'))
+        sync_run_id = compact_text(row.get('sync_run_id'))
+        if not campaign_name or not ad_id or sync_run_id not in (latest_sync_id, previous_sync_id):
+            continue
+        target = latest_snapshot_by_campaign if sync_run_id == latest_sync_id else previous_snapshot_by_campaign
+        target.setdefault(campaign_name, {})[ad_id] = row
+
     metric_rows = supabase_select_rows(
         settings,
         'ad_window_metrics',
         query={
-            'select': 'sync_run_id,ad_id,range_key,spend,sales,purchases,roas,cpa',
-            'sync_run_id': f"in.({','.join(sync_ids)})",
-            'ad_id': f"in.({','.join({change['adId'] for change in latest_changes})})",
+            'select': 'sync_run_id,ad_id,campaign_name,range_key,spend,sales,purchases,roas,cpa',
+            'sync_run_id': f"in.({latest_sync_id},{previous_sync_id})",
             'range_key': f"in.({','.join(OPTIMIZATION_IMPACT_RANGES)})",
-            'limit': str(max(400, len(sync_ids) * len(OPTIMIZATION_IMPACT_RANGES) * 20)),
+            'limit': str(max(1600, len(relevant_campaigns) * len(OPTIMIZATION_IMPACT_RANGES) * 300)),
         },
     )
+    metric_rows = [
+        row for row in metric_rows
+        if compact_text(row.get('campaign_name')) in relevant_campaigns
+    ]
     metric_lookup = {
         (row.get('sync_run_id'), row.get('ad_id'), row.get('range_key')): row
         for row in metric_rows
     }
+    campaign_metric_lookup = {}
+    for row in metric_rows:
+        campaign_key = (row.get('sync_run_id'), compact_text(row.get('campaign_name')), row.get('range_key'))
+        campaign_metric_lookup.setdefault(campaign_key, []).append(row)
 
     logs = []
-    for change in latest_changes:
-        impact_by_range = {}
-        for range_key in OPTIMIZATION_IMPACT_RANGES:
-            after_metrics = metric_lookup.get((change['syncRunId'], change['adId'], range_key))
-            before_metrics = metric_lookup.get((change['previousSyncRunId'], change['adId'], range_key))
-            if not after_metrics or not before_metrics:
-                continue
-            impact_by_range[range_key] = build_impact_summary(before_metrics, after_metrics, range_key)
+    for campaign_name in sorted(relevant_campaigns):
+        latest_campaign_rows = latest_snapshot_by_campaign.get(campaign_name, {})
+        previous_campaign_rows = previous_snapshot_by_campaign.get(campaign_name, {})
+        if not latest_campaign_rows and not previous_campaign_rows:
+            continue
 
-        logs.append({
-            'adId': change['adId'],
-            'adName': change['adName'],
-            'campaignName': change['campaignName'],
-            'changedAt': change['changedAt'],
-            'changes': change['changes'],
-            'impactByRange': impact_by_range,
-        })
+        latest_ids = set(latest_campaign_rows.keys())
+        previous_ids = set(previous_campaign_rows.keys())
+        changed_ids = sorted(latest_ids & previous_ids)
+        cut_ids = sorted(previous_ids - latest_ids)
+        new_ids = sorted(latest_ids - previous_ids)
+
+        replacement_names = summarize_name_list(
+            [latest_campaign_rows[ad_id].get('ad_name') for ad_id in new_ids]
+        )
+        removed_names = summarize_name_list(
+            [previous_campaign_rows[ad_id].get('ad_name') for ad_id in cut_ids]
+        )
+
+        campaign_impact_by_range = {}
+        for range_key in OPTIMIZATION_IMPACT_RANGES:
+            after_rows = campaign_metric_lookup.get((latest_sync_id, campaign_name, range_key), [])
+            before_rows = campaign_metric_lookup.get((previous_sync_id, campaign_name, range_key), [])
+            if not after_rows or not before_rows:
+                continue
+            campaign_impact_by_range[range_key] = build_impact_summary(
+                aggregate_metric_row_group(before_rows),
+                aggregate_metric_row_group(after_rows),
+                range_key,
+            )
+
+        for ad_id in changed_ids:
+            current_row = latest_campaign_rows[ad_id]
+            previous_row = previous_campaign_rows[ad_id]
+            changes = describe_snapshot_changes(current_row, previous_row)
+            if not changes:
+                continue
+
+            impact_by_range = {}
+            for range_key in OPTIMIZATION_IMPACT_RANGES:
+                after_metrics = metric_lookup.get((latest_sync_id, ad_id, range_key))
+                before_metrics = metric_lookup.get((previous_sync_id, ad_id, range_key))
+                if not after_metrics or not before_metrics:
+                    continue
+                impact_by_range[range_key] = build_impact_summary(before_metrics, after_metrics, range_key)
+
+            logs.append({
+                'eventType': 'updated',
+                'adId': ad_id,
+                'adName': current_row.get('ad_name', ''),
+                'campaignName': campaign_name,
+                'adLocation': campaign_name,
+                'changedAt': current_row.get('generated_at') or latest_sync_at,
+                'changes': changes,
+                'impactByRange': impact_by_range,
+            })
+
+        for ad_id in cut_ids:
+            row = previous_campaign_rows[ad_id]
+            changes = describe_removed_snapshot(row)
+            if replacement_names:
+                changes.append(f"New replacement ads uploaded in the same campaign: {replacement_names}")
+            logs.append({
+                'eventType': 'cut',
+                'adId': ad_id,
+                'adName': row.get('ad_name', ''),
+                'campaignName': campaign_name,
+                'adLocation': campaign_name,
+                'changedAt': latest_sync_at or row.get('generated_at'),
+                'changes': changes,
+                'impactByRange': campaign_impact_by_range,
+            })
+
+        for ad_id in new_ids:
+            row = latest_campaign_rows[ad_id]
+            is_replacement = bool(cut_ids)
+            changes = describe_new_snapshot(row)
+            if is_replacement:
+                changes[0] = f"Uploaded as a new replacement using a {describe_media_type(row)} in this campaign"
+            if removed_names:
+                changes.append(f"Ads removed from this campaign at the same time: {removed_names}")
+            logs.append({
+                'eventType': 'new_replacement' if is_replacement else 'new_upload',
+                'adId': ad_id,
+                'adName': row.get('ad_name', ''),
+                'campaignName': campaign_name,
+                'adLocation': campaign_name,
+                'changedAt': row.get('generated_at') or latest_sync_at,
+                'changes': changes,
+                'impactByRange': campaign_impact_by_range,
+            })
 
     return sorted(logs, key=lambda row: row.get('changedAt') or '', reverse=True)
 

@@ -535,6 +535,7 @@ const state = {
   liveAdsStatus: 'All statuses',
   liveAdsFormat: 'All formats',
   alertThresholds: loadAlertThresholds(),
+  expandedOptimizationCampaigns: {},
 };
 
 let autoRefreshTimer = null;
@@ -914,33 +915,101 @@ function buildMockDemographics(ads, includeCustom = false) {
 }
 
 function buildMockOptimizationLogs(ads) {
-  return (ads || []).slice(0, 3).map((ad, index) => ({
-    adId: ad.id,
-    adName: ad.name,
-    campaignName: ad.campaign,
-    changedAt: shiftIsoDate(todayIso(), -(index + 2)),
-    changes: [
-      'Headline updated',
-      'Primary text updated',
-      index === 0 ? 'Call to action updated' : 'Creative asset updated',
-    ],
-    impactByRange: {
-      '7d': {
-        label: index === 1 ? 'negative' : 'positive',
-        summary:
-          index === 1
-            ? 'ROAS fell from 1.82x to 1.31x while CPA rose after the last edit.'
-            : 'ROAS improved after the edit while CPA became more efficient in the latest 7-day window.',
-      },
-      '30d': {
-        label: index === 1 ? 'negative' : 'positive',
-        summary:
-          index === 1
-            ? 'Thirty-day efficiency softened after the change.'
-            : 'Thirty-day efficiency strengthened after the change.',
+  const sourceAds = (ads || []).slice(0, 4);
+  if (!sourceAds.length) {
+    return [];
+  }
+
+  const primary = sourceAds[0];
+  const companion = sourceAds[1] || primary;
+  const secondary = sourceAds[2] || companion;
+  const tertiary = sourceAds[3] || secondary;
+
+  return [
+    {
+      eventType: 'updated',
+      adId: primary.id,
+      adName: primary.name,
+      campaignName: primary.campaign,
+      adLocation: primary.campaign,
+      changedAt: shiftIsoDate(todayIso(), -2),
+      changes: [
+        `Video asset swapped from a 12s cut to a 7s cut`,
+        `Headline changed from “${primary.headline || 'Old headline'}” to “${primary.headline || 'New headline'}”`,
+        'Call to action changed from “Learn More” to “Order Now”',
+      ],
+      impactByRange: {
+        '7d': {
+          label: 'positive',
+          summary: 'ROAS improved after the new short-form edit went live while CPA tightened in the latest 7-day window.',
+        },
+        '30d': {
+          label: 'positive',
+          summary: 'Thirty-day efficiency strengthened after the creative refresh.',
+        },
       },
     },
-  }));
+    {
+      eventType: 'cut',
+      adId: `${companion.id}-cut`,
+      adName: `Retired | ${companion.name}`,
+      campaignName: primary.campaign,
+      adLocation: primary.campaign,
+      changedAt: shiftIsoDate(todayIso(), -2),
+      changes: [
+        'Cut entirely from the campaign after its last static image asset version',
+        `New replacement ads uploaded in the same campaign: ${companion.name}`,
+      ],
+      impactByRange: {
+        '7d': {
+          label: 'negative',
+          summary: 'Account efficiency softened immediately after the retirement, so the replacement needs more validation.',
+        },
+      },
+    },
+    {
+      eventType: 'new_replacement',
+      adId: companion.id,
+      adName: companion.name,
+      campaignName: primary.campaign,
+      adLocation: primary.campaign,
+      changedAt: shiftIsoDate(todayIso(), -2),
+      changes: [
+        'Uploaded as a new replacement using a video asset in this campaign',
+        `Launch headline: “${companion.headline || 'New headline'}”`,
+        `Ads removed from this campaign at the same time: Retired | ${primary.name}`,
+      ],
+      impactByRange: {
+        '7d': {
+          label: 'positive',
+          summary: 'The replacement recovered efficiency versus the retired ad inside the latest 7-day window.',
+        },
+      },
+    },
+    {
+      eventType: 'updated',
+      adId: secondary.id,
+      adName: secondary.name,
+      campaignName: secondary.campaign,
+      adLocation: secondary.campaign,
+      changedAt: shiftIsoDate(todayIso(), -4),
+      changes: [
+        'Static image asset replaced with a new creative image',
+        `Primary text changed from “${secondary.copy || 'Previous copy'}” to “${tertiary.copy || secondary.copy || 'Updated copy'}”`,
+        `Landing destination changed from “${secondary.landingPage || secondary.destinationUrl || '/collections'}” to “${tertiary.landingPage || tertiary.destinationUrl || secondary.landingPage || '/collections'}”`,
+      ],
+      impactByRange: {
+        '7d': {
+          label: 'negative',
+          summary: 'ROAS softened after the static refresh while CPA rose in the same post-change window.',
+        },
+        '30d': {
+          label: 'negative',
+          summary: 'Thirty-day efficiency weakened after the creative swap.',
+        },
+      },
+    },
+  ];
 }
 
 function normalizePayload(payload) {
@@ -2660,14 +2729,29 @@ function optimizationImpactClass(label) {
   return 'is-neutral';
 }
 
+function optimizationEventLabel(eventType) {
+  if (eventType === 'cut') {
+    return 'Cut entirely';
+  }
+  if (eventType === 'new_replacement') {
+    return 'New replacement';
+  }
+  if (eventType === 'new_upload') {
+    return 'New upload';
+  }
+  return 'Ad updated';
+}
+
 function renderOptimizationLog(liveAds) {
   if (!elements.optimizationLogList || !elements.optimizationLogSummary) {
     return;
   }
 
-  const liveAdIds = new Set((liveAds || []).map((ad) => ad.id));
+  const visibleCampaigns = new Set((liveAds || []).map((ad) => ad.campaign).filter(Boolean));
   const adsById = new Map((state.payload?.ads || []).map((ad) => [ad.id, ad]));
-  const optimizationLogs = (state.payload?.optimizationLogs || []).filter((log) => liveAdIds.has(log.adId));
+  const optimizationLogs = (state.payload?.optimizationLogs || [])
+    .filter((log) => visibleCampaigns.has(log.campaignName))
+    .sort((left, right) => String(right.changedAt || '').localeCompare(String(left.changedAt || '')));
 
   if (!optimizationLogs.length) {
     const storageConfigured = Boolean(state.payload?.storage?.configured);
@@ -2684,53 +2768,112 @@ function renderOptimizationLog(liveAds) {
     return;
   }
 
-  elements.optimizationLogSummary.textContent = `${optimizationLogs.length} recent change event${optimizationLogs.length === 1 ? '' : 's'} in the current live view.`;
+  const groupedLogs = optimizationLogs.reduce((groups, log) => {
+    const campaignName = log.campaignName || 'Unmapped campaign';
+    if (!groups.has(campaignName)) {
+      groups.set(campaignName, []);
+    }
+    groups.get(campaignName).push(log);
+    return groups;
+  }, new Map());
 
-  elements.optimizationLogList.innerHTML = optimizationLogs
-    .map((log) => {
-      const ad = adsById.get(log.adId) || {};
-      const locationLabel = ad.adsetName ? `${ad.campaign} • ${ad.adsetName}` : ad.campaign || log.campaignName || 'Unmapped location';
-      const impact = optimizationImpactForLog(log);
-      const impactLabel = impact?.label === 'positive' ? 'Positive impact' : impact?.label === 'negative' ? 'Negative impact' : 'Impact pending';
-      const impactClass = optimizationImpactClass(impact?.label);
-      const impactSummary =
-        impact?.summary ||
-        'The app has recorded the ad change, but enough before/after performance history is not available yet to classify the impact.';
+  elements.optimizationLogSummary.textContent = `${groupedLogs.size} campaign${groupedLogs.size === 1 ? '' : 's'} with ${optimizationLogs.length} recent change event${optimizationLogs.length === 1 ? '' : 's'} in the current live view.`;
+
+  elements.optimizationLogList.innerHTML = Array.from(groupedLogs.entries())
+    .map(([campaignName, logs]) => {
+      const expanded = Boolean(state.expandedOptimizationCampaigns[campaignName]);
+      const updatedCount = logs.filter((log) => log.eventType === 'updated').length;
+      const cutCount = logs.filter((log) => log.eventType === 'cut').length;
+      const replacementCount = logs.filter((log) => log.eventType === 'new_replacement').length;
+      const uploadCount = logs.filter((log) => log.eventType === 'new_upload').length;
 
       return `
-        <article class="optimization-log-card">
-          <div class="optimization-log-head">
+        <section class="optimization-log-campaign ${expanded ? 'is-expanded' : ''}">
+          <button
+            type="button"
+            class="optimization-log-campaign-toggle"
+            data-optimization-campaign="${escapeHtml(campaignName)}"
+            aria-expanded="${expanded ? 'true' : 'false'}"
+          >
             <div>
-              <h4>${escapeHtml(log.adName || ad.name || 'Untitled ad')}</h4>
-              <p class="optimization-log-location">${escapeHtml(locationLabel)}</p>
+              <p class="small-label">Campaign</p>
+              <h4>${escapeHtml(campaignName)}</h4>
             </div>
-            <span class="optimization-log-impact ${impactClass}">${escapeHtml(impactLabel)}</span>
-          </div>
+            <div class="optimization-log-campaign-meta">
+              ${updatedCount ? `<span class="optimization-log-count-chip">${updatedCount} update${updatedCount === 1 ? '' : 's'}</span>` : ''}
+              ${cutCount ? `<span class="optimization-log-count-chip is-cut">${cutCount} cut${cutCount === 1 ? '' : 's'}</span>` : ''}
+              ${replacementCount ? `<span class="optimization-log-count-chip is-replacement">${replacementCount} replacement${replacementCount === 1 ? '' : 's'}</span>` : ''}
+              ${uploadCount ? `<span class="optimization-log-count-chip">${uploadCount} new upload${uploadCount === 1 ? '' : 's'}</span>` : ''}
+              <span class="optimization-log-chevron">${expanded ? 'Collapse' : 'Expand'}</span>
+            </div>
+          </button>
 
-          <div class="optimization-log-meta">
-            <div class="optimization-log-field">
-              <span class="small-label">Ad name</span>
-              <strong>${escapeHtml(log.adName || ad.name || 'Untitled ad')}</strong>
-            </div>
-            <div class="optimization-log-field">
-              <span class="small-label">Ad location</span>
-              <strong>${escapeHtml(locationLabel)}</strong>
-            </div>
-            <div class="optimization-log-field">
-              <span class="small-label">Date change was made</span>
-              <strong>${escapeHtml(formatShortDate(log.changedAt) || 'Not captured')}</strong>
-            </div>
-          </div>
+          <div class="optimization-log-campaign-body" ${expanded ? '' : 'hidden'}>
+            ${logs
+              .map((log) => {
+                const ad = adsById.get(log.adId) || {};
+                const locationLabel =
+                  log.eventType === 'cut'
+                    ? `${log.campaignName || log.adLocation || 'Unmapped campaign'} • Removed from live lineup`
+                    : ad.adsetName
+                      ? `${ad.campaign} • ${ad.adsetName}`
+                      : ad.campaign || log.adLocation || log.campaignName || 'Unmapped location';
+                const impact = optimizationImpactForLog(log);
+                const impactLabel =
+                  impact?.label === 'positive'
+                    ? 'Positive impact'
+                    : impact?.label === 'negative'
+                      ? 'Negative impact'
+                      : impact?.summary
+                        ? 'Neutral impact'
+                        : 'Impact pending';
+                const impactClass = optimizationImpactClass(impact?.label);
+                const impactSummary =
+                  impact?.summary ||
+                  'The app has recorded the change, but enough before/after performance history is not available yet to classify the impact.';
 
-          <div class="optimization-log-detail">
-            <span class="small-label">Changes made to ad</span>
-            <ul class="optimization-log-bullets">
-              ${(log.changes || []).map((change) => `<li>${escapeHtml(change)}</li>`).join('')}
-            </ul>
-          </div>
+                return `
+                  <article class="optimization-log-card">
+                    <div class="optimization-log-head">
+                      <div>
+                        <div class="optimization-log-title-row">
+                          <h4>${escapeHtml(log.adName || ad.name || 'Untitled ad')}</h4>
+                          <span class="optimization-log-event-type">${escapeHtml(optimizationEventLabel(log.eventType))}</span>
+                        </div>
+                        <p class="optimization-log-location">${escapeHtml(locationLabel)}</p>
+                      </div>
+                      <span class="optimization-log-impact ${impactClass}">${escapeHtml(impactLabel)}</span>
+                    </div>
 
-          <p class="optimization-log-summary ${impactClass}">${escapeHtml(impactSummary)}</p>
-        </article>
+                    <div class="optimization-log-meta">
+                      <div class="optimization-log-field">
+                        <span class="small-label">Ad name</span>
+                        <strong>${escapeHtml(log.adName || ad.name || 'Untitled ad')}</strong>
+                      </div>
+                      <div class="optimization-log-field">
+                        <span class="small-label">Ad location</span>
+                        <strong>${escapeHtml(locationLabel)}</strong>
+                      </div>
+                      <div class="optimization-log-field">
+                        <span class="small-label">Date change was made</span>
+                        <strong>${escapeHtml(formatShortDate(log.changedAt) || 'Not captured')}</strong>
+                      </div>
+                    </div>
+
+                    <div class="optimization-log-detail">
+                      <span class="small-label">Changes made to ad</span>
+                      <ul class="optimization-log-bullets">
+                        ${(log.changes || []).map((change) => `<li>${escapeHtml(change)}</li>`).join('')}
+                      </ul>
+                    </div>
+
+                    <p class="optimization-log-summary ${impactClass}">${escapeHtml(impactSummary)}</p>
+                  </article>
+                `;
+              })
+              .join('')}
+          </div>
+        </section>
       `;
     })
     .join('');
@@ -3770,6 +3913,21 @@ function bindEvents() {
     state.contentCollapsed = !state.contentCollapsed;
     renderContentPanelState();
   });
+
+  if (elements.optimizationLogList) {
+    elements.optimizationLogList.addEventListener('click', (event) => {
+      const toggle = event.target.closest('[data-optimization-campaign]');
+      if (!toggle) {
+        return;
+      }
+      const campaignName = toggle.dataset.optimizationCampaign;
+      state.expandedOptimizationCampaigns = {
+        ...state.expandedOptimizationCampaigns,
+        [campaignName]: !state.expandedOptimizationCampaigns[campaignName],
+      };
+      render();
+    });
+  }
 
   if (elements.alertThresholdsTable) {
     elements.alertThresholdsTable.addEventListener('change', (event) => {
