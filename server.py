@@ -1146,6 +1146,20 @@ def build_optimization_logs(settings, payload_ads):
     if not ad_ids:
         return []
 
+    recent_sync_runs = supabase_select_rows(
+        settings,
+        'meta_sync_runs',
+        query={
+            'select': 'id,generated_at',
+            'sync_status': 'eq.completed',
+            'order': 'generated_at.desc',
+            'limit': '6',
+        },
+    )
+    sync_run_ids = [row.get('id') for row in recent_sync_runs if row.get('id')]
+    if len(sync_run_ids) < 2:
+        return []
+
     snapshot_rows = supabase_select_rows(
         settings,
         'ad_snapshots',
@@ -1175,9 +1189,10 @@ def build_optimization_logs(settings, payload_ads):
                 'link_variants',
                 'cta_variants',
             ]),
+            'sync_run_id': f"in.({','.join(sync_run_ids)})",
             'ad_id': f"in.({','.join(ad_ids)})",
-            'order': 'ad_id.asc,generated_at.desc',
-            'limit': str(max(500, len(ad_ids) * 6)),
+            'order': 'generated_at.desc',
+            'limit': str(max(300, len(ad_ids) * len(sync_run_ids))),
         },
     )
 
