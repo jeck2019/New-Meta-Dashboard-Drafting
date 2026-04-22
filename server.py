@@ -141,6 +141,7 @@ DAILY_INSIGHTS_FIELDS_FULL = ','.join([
 ])
 SUPABASE_CHUNK_SIZE = 200
 PRIMARY_RANGE_KEYS = ('7d', '30d', 'custom')
+OPTIMIZATION_IMPACT_RANGES = ('7d', '30d')
 DEMOGRAPHIC_BREAKDOWNS = {
     'age': 'age',
     'gender': 'gender',
@@ -370,6 +371,10 @@ def supabase_upsert_rows(settings, table, rows, on_conflict):
             query={'on_conflict': on_conflict},
             prefer='resolution=merge-duplicates,return=minimal',
         )
+
+
+def supabase_select_rows(settings, table, query=None):
+    return supabase_request(settings, 'GET', table, query=query)
 
 
 def parse_iso_date(raw_value):
@@ -993,6 +998,261 @@ def format_delta(value):
     return f'{sign}{format_number(value, 1)}%'
 
 
+def compact_text(value):
+    return ' '.join(str(value or '').split()).strip()
+
+
+def normalized_variant_values(values):
+    return tuple(compact_text(value) for value in (values or []) if compact_text(value))
+
+
+def title_case_status(value):
+    return compact_text(value).replace('_', ' ').title()
+
+
+def describe_snapshot_changes(current_row, previous_row):
+    changes = []
+
+    def changed(field):
+        return compact_text(current_row.get(field)) != compact_text(previous_row.get(field))
+
+    if changed('creative_name'):
+        changes.append('Creative asset updated')
+
+    media_changed = any(
+        compact_text(current_row.get(field)) != compact_text(previous_row.get(field))
+        for field in ('media_source_url', 'media_preview_url', 'video_id', 'image_hash')
+    )
+    if media_changed:
+        changes.append('Media asset updated')
+
+    field_messages = [
+        ('headline', 'Headline updated'),
+        ('primary_text', 'Primary text updated'),
+        ('description', 'Description updated'),
+        ('hook', 'Hook updated'),
+        ('call_to_action', 'Call to action updated'),
+    ]
+    for field, message in field_messages:
+        if changed(field):
+            changes.append(message)
+
+    if changed('landing_page') or changed('destination_url'):
+        changes.append('Landing destination updated')
+
+    if changed('current_status'):
+        changes.append(f"Delivery status changed to {title_case_status(current_row.get('current_status'))}")
+
+    variant_messages = [
+        ('body_variants', 'Body variants updated'),
+        ('title_variants', 'Headline variants updated'),
+        ('description_variants', 'Description variants updated'),
+        ('cta_variants', 'CTA variants updated'),
+        ('link_variants', 'Link variants updated'),
+    ]
+    for field, message in variant_messages:
+        if normalized_variant_values(current_row.get(field)) != normalized_variant_values(previous_row.get(field)):
+            changes.append(message)
+
+    deduped = []
+    seen = set()
+    for change in changes:
+        if change in seen:
+            continue
+        deduped.append(change)
+        seen.add(change)
+    return deduped
+
+
+def build_impact_summary(before_metrics, after_metrics, range_key):
+    before_roas = to_float(before_metrics.get('roas'))
+    after_roas = to_float(after_metrics.get('roas'))
+    before_cpa = to_float(before_metrics.get('cpa'))
+    after_cpa = to_float(after_metrics.get('cpa'))
+    before_sales = to_float(before_metrics.get('sales'))
+    after_sales = to_float(after_metrics.get('sales'))
+    before_purchases = to_float(before_metrics.get('purchases'))
+    after_purchases = to_float(after_metrics.get('purchases'))
+
+    score = 0
+    reason_parts = []
+
+    if after_roas > before_roas + 0.01:
+        score += 2
+        reason_parts.append(f"ROAS improved from {format_number(before_roas, 2)}x to {format_number(after_roas, 2)}x")
+    elif after_roas < before_roas - 0.01:
+        score -= 2
+        reason_parts.append(f"ROAS fell from {format_number(before_roas, 2)}x to {format_number(after_roas, 2)}x")
+
+    before_has_cpa = before_purchases > 0 and before_cpa > 0
+    after_has_cpa = after_purchases > 0 and after_cpa > 0
+    if before_has_cpa and after_has_cpa:
+        if after_cpa < before_cpa - 0.01:
+            score += 2
+            reason_parts.append(f"CPA fell from ${format_number(before_cpa, 2)} to ${format_number(after_cpa, 2)}")
+        elif after_cpa > before_cpa + 0.01:
+            score -= 2
+            reason_parts.append(f"CPA rose from ${format_number(before_cpa, 2)} to ${format_number(after_cpa, 2)}")
+    elif not before_has_cpa and after_has_cpa:
+        score += 1
+        reason_parts.append(f"Purchases started converting at ${format_number(after_cpa, 2)} CPA")
+    elif before_has_cpa and not after_has_cpa:
+        score -= 1
+        reason_parts.append('Purchases stopped converting after the change')
+
+    if after_sales > before_sales + 0.01:
+        score += 1
+    elif after_sales < before_sales - 0.01:
+        score -= 1
+
+    if after_purchases > before_purchases:
+        score += 1
+    elif after_purchases < before_purchases:
+        score -= 1
+
+    impact_label = 'positive' if score > 0 else 'negative'
+    if not reason_parts:
+        if impact_label == 'positive':
+            reason_parts.append(f"Efficiency improved in the {range_display_label(range_key)} window after the change")
+        else:
+            reason_parts.append(f"Efficiency weakened in the {range_display_label(range_key)} window after the change")
+
+    return {
+        'label': impact_label,
+        'summary': '. '.join(reason_parts) + '.',
+        'score': score,
+        'before': {
+            'spend': round(to_float(before_metrics.get('spend')), 2),
+            'sales': round(before_sales, 2),
+            'purchases': round(before_purchases, 2),
+            'roas': round(before_roas, 4),
+            'cpa': round(before_cpa, 4),
+        },
+        'after': {
+            'spend': round(to_float(after_metrics.get('spend')), 2),
+            'sales': round(after_sales, 2),
+            'purchases': round(after_purchases, 2),
+            'roas': round(after_roas, 4),
+            'cpa': round(after_cpa, 4),
+        },
+    }
+
+
+def build_optimization_logs(settings, payload_ads):
+    if not supabase_configured(settings):
+        return []
+
+    ad_ids = [ad.get('id') for ad in payload_ads if ad.get('id')]
+    if not ad_ids:
+        return []
+
+    snapshot_rows = supabase_select_rows(
+        settings,
+        'ad_snapshots',
+        query={
+            'select': ','.join([
+                'sync_run_id',
+                'generated_at',
+                'ad_id',
+                'ad_name',
+                'campaign_name',
+                'current_status',
+                'creative_name',
+                'headline',
+                'primary_text',
+                'description',
+                'hook',
+                'landing_page',
+                'destination_url',
+                'call_to_action',
+                'media_preview_url',
+                'media_source_url',
+                'video_id',
+                'image_hash',
+                'body_variants',
+                'title_variants',
+                'description_variants',
+                'link_variants',
+                'cta_variants',
+            ]),
+            'ad_id': f"in.({','.join(ad_ids)})",
+            'order': 'ad_id.asc,generated_at.desc',
+            'limit': str(max(500, len(ad_ids) * 6)),
+        },
+    )
+
+    grouped_rows = {}
+    for row in snapshot_rows:
+        grouped_rows.setdefault(row.get('ad_id'), []).append(row)
+
+    latest_changes = []
+    for ad_id, rows in grouped_rows.items():
+        for index in range(len(rows) - 1):
+            current_row = rows[index]
+            previous_row = rows[index + 1]
+            changes = describe_snapshot_changes(current_row, previous_row)
+            if not changes:
+                continue
+            latest_changes.append({
+                'adId': ad_id,
+                'adName': current_row.get('ad_name', ''),
+                'campaignName': current_row.get('campaign_name', ''),
+                'changedAt': current_row.get('generated_at'),
+                'syncRunId': current_row.get('sync_run_id'),
+                'previousSyncRunId': previous_row.get('sync_run_id'),
+                'changes': changes,
+            })
+            break
+
+    if not latest_changes:
+        return []
+
+    sync_ids = sorted(
+        {
+            value
+            for change in latest_changes
+            for value in (change['syncRunId'], change['previousSyncRunId'])
+            if value
+        }
+    )
+    metric_rows = supabase_select_rows(
+        settings,
+        'ad_window_metrics',
+        query={
+            'select': 'sync_run_id,ad_id,range_key,spend,sales,purchases,roas,cpa',
+            'sync_run_id': f"in.({','.join(sync_ids)})",
+            'ad_id': f"in.({','.join({change['adId'] for change in latest_changes})})",
+            'range_key': f"in.({','.join(OPTIMIZATION_IMPACT_RANGES)})",
+            'limit': str(max(400, len(sync_ids) * len(OPTIMIZATION_IMPACT_RANGES) * 20)),
+        },
+    )
+    metric_lookup = {
+        (row.get('sync_run_id'), row.get('ad_id'), row.get('range_key')): row
+        for row in metric_rows
+    }
+
+    logs = []
+    for change in latest_changes:
+        impact_by_range = {}
+        for range_key in OPTIMIZATION_IMPACT_RANGES:
+            after_metrics = metric_lookup.get((change['syncRunId'], change['adId'], range_key))
+            before_metrics = metric_lookup.get((change['previousSyncRunId'], change['adId'], range_key))
+            if not after_metrics or not before_metrics:
+                continue
+            impact_by_range[range_key] = build_impact_summary(before_metrics, after_metrics, range_key)
+
+        logs.append({
+            'adId': change['adId'],
+            'adName': change['adName'],
+            'campaignName': change['campaignName'],
+            'changedAt': change['changedAt'],
+            'changes': change['changes'],
+            'impactByRange': impact_by_range,
+        })
+
+    return sorted(logs, key=lambda row: row.get('changedAt') or '', reverse=True)
+
+
 def compare_key_for_range(range_key):
     return {
         '7d': 'wow',
@@ -1548,6 +1808,7 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
             'periods': windows,
             'ads': payload_ads,
             'demographics': demographics,
+            'optimizationLogs': [],
             'storage': storage_state,
             'stale': False,
             'staleReason': '',
@@ -1559,6 +1820,12 @@ def build_dashboard_payload(settings, force_refresh=False, custom_since=None, cu
                 storage_state['persisted'] = True
             except SupabaseAPIError as exc:
                 storage_state['error'] = exc.message
+        if storage_state['configured']:
+            try:
+                payload['optimizationLogs'] = build_optimization_logs(settings, payload_ads)
+            except SupabaseAPIError as exc:
+                if not storage_state.get('error'):
+                    storage_state['error'] = exc.message
         payload['storage'] = storage_state
 
         CACHE[cache_key] = {'time': time.time(), 'data': payload}

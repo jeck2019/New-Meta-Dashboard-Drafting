@@ -558,6 +558,8 @@ const elements = {
   adsPanelBody: document.querySelector('#ads-panel-body'),
   adsCollapseToggle: document.querySelector('#ads-collapse-toggle'),
   adsTbody: document.querySelector('#ads-tbody'),
+  optimizationLogSummary: document.querySelector('#optimization-log-summary'),
+  optimizationLogList: document.querySelector('#optimization-log-list'),
   copyLeaderboard: document.querySelector('#copy-leaderboard'),
   hookLeaderboard: document.querySelector('#hook-leaderboard'),
   landingLeaderboard: document.querySelector('#landing-leaderboard'),
@@ -911,10 +913,41 @@ function buildMockDemographics(ads, includeCustom = false) {
   return demographics;
 }
 
+function buildMockOptimizationLogs(ads) {
+  return (ads || []).slice(0, 3).map((ad, index) => ({
+    adId: ad.id,
+    adName: ad.name,
+    campaignName: ad.campaign,
+    changedAt: shiftIsoDate(todayIso(), -(index + 2)),
+    changes: [
+      'Headline updated',
+      'Primary text updated',
+      index === 0 ? 'Call to action updated' : 'Creative asset updated',
+    ],
+    impactByRange: {
+      '7d': {
+        label: index === 1 ? 'negative' : 'positive',
+        summary:
+          index === 1
+            ? 'ROAS fell from 1.82x to 1.31x while CPA rose after the last edit.'
+            : 'ROAS improved after the edit while CPA became more efficient in the latest 7-day window.',
+      },
+      '30d': {
+        label: index === 1 ? 'negative' : 'positive',
+        summary:
+          index === 1
+            ? 'Thirty-day efficiency softened after the change.'
+            : 'Thirty-day efficiency strengthened after the change.',
+      },
+    },
+  }));
+}
+
 function normalizePayload(payload) {
   return {
     ...payload,
     demographics: normalizeDemographicsPayload(payload.demographics),
+    optimizationLogs: payload.optimizationLogs || [],
     ads: (payload.ads || []).map((ad, index) => {
       const metrics = Object.fromEntries(
         Object.entries(ad.metrics || {}).map(([key, value]) => [key, withDerived(value)])
@@ -944,6 +977,7 @@ function createMockPayload(errorMessage, customWindow = null) {
   payload.generatedAt = new Date().toISOString();
   payload.error = errorMessage || '';
   payload.demographics = buildMockDemographics(payload.ads, Boolean(customWindow));
+  payload.optimizationLogs = buildMockOptimizationLogs(payload.ads);
 
   if (customWindow?.since && customWindow?.until) {
     payload.periods.custom = customWindow;
@@ -2605,6 +2639,103 @@ function renderTable(visibleAds) {
     .join('');
 }
 
+function optimizationImpactForLog(log) {
+  const impactByRange = log?.impactByRange || {};
+  return (
+    impactByRange[state.range] ||
+    impactByRange['7d'] ||
+    impactByRange['30d'] ||
+    Object.values(impactByRange)[0] ||
+    null
+  );
+}
+
+function optimizationImpactClass(label) {
+  if (label === 'positive') {
+    return 'is-positive';
+  }
+  if (label === 'negative') {
+    return 'is-negative';
+  }
+  return 'is-neutral';
+}
+
+function renderOptimizationLog(liveAds) {
+  if (!elements.optimizationLogList || !elements.optimizationLogSummary) {
+    return;
+  }
+
+  const liveAdIds = new Set((liveAds || []).map((ad) => ad.id));
+  const adsById = new Map((state.payload?.ads || []).map((ad) => [ad.id, ad]));
+  const optimizationLogs = (state.payload?.optimizationLogs || []).filter((log) => liveAdIds.has(log.adId));
+
+  if (!optimizationLogs.length) {
+    const storageConfigured = Boolean(state.payload?.storage?.configured);
+    elements.optimizationLogSummary.textContent = storageConfigured
+      ? 'No recent optimizations found in the current live view.'
+      : 'Historical storage is required for optimization change tracking.';
+    elements.optimizationLogList.innerHTML = `
+      <div class="empty-state">
+        <p class="empty-kicker">${storageConfigured ? 'No recent change events' : 'History required'}</p>
+        <h4>${storageConfigured ? 'No recent ad edits were detected for the filtered live ads.' : 'Optimization Log needs persisted history to populate.'}</h4>
+        <p>${storageConfigured ? 'As new ad changes are captured in the sync history, this panel will list what changed and whether performance improved or weakened after the edit.' : 'This panel compares stored ad snapshots over time, so it will populate when Supabase-backed sync history is available.'}</p>
+      </div>
+    `;
+    return;
+  }
+
+  elements.optimizationLogSummary.textContent = `${optimizationLogs.length} recent change event${optimizationLogs.length === 1 ? '' : 's'} in the current live view.`;
+
+  elements.optimizationLogList.innerHTML = optimizationLogs
+    .map((log) => {
+      const ad = adsById.get(log.adId) || {};
+      const locationLabel = ad.adsetName ? `${ad.campaign} • ${ad.adsetName}` : ad.campaign || log.campaignName || 'Unmapped location';
+      const impact = optimizationImpactForLog(log);
+      const impactLabel = impact?.label === 'positive' ? 'Positive impact' : impact?.label === 'negative' ? 'Negative impact' : 'Impact pending';
+      const impactClass = optimizationImpactClass(impact?.label);
+      const impactSummary =
+        impact?.summary ||
+        'The app has recorded the ad change, but enough before/after performance history is not available yet to classify the impact.';
+
+      return `
+        <article class="optimization-log-card">
+          <div class="optimization-log-head">
+            <div>
+              <h4>${escapeHtml(log.adName || ad.name || 'Untitled ad')}</h4>
+              <p class="optimization-log-location">${escapeHtml(locationLabel)}</p>
+            </div>
+            <span class="optimization-log-impact ${impactClass}">${escapeHtml(impactLabel)}</span>
+          </div>
+
+          <div class="optimization-log-meta">
+            <div class="optimization-log-field">
+              <span class="small-label">Ad name</span>
+              <strong>${escapeHtml(log.adName || ad.name || 'Untitled ad')}</strong>
+            </div>
+            <div class="optimization-log-field">
+              <span class="small-label">Ad location</span>
+              <strong>${escapeHtml(locationLabel)}</strong>
+            </div>
+            <div class="optimization-log-field">
+              <span class="small-label">Date change was made</span>
+              <strong>${escapeHtml(formatShortDate(log.changedAt) || 'Not captured')}</strong>
+            </div>
+          </div>
+
+          <div class="optimization-log-detail">
+            <span class="small-label">Changes made to ad</span>
+            <ul class="optimization-log-bullets">
+              ${(log.changes || []).map((change) => `<li>${escapeHtml(change)}</li>`).join('')}
+            </ul>
+          </div>
+
+          <p class="optimization-log-summary ${impactClass}">${escapeHtml(impactSummary)}</p>
+        </article>
+      `;
+    })
+    .join('');
+}
+
 function leaderboardItems(items, emptyLabel) {
   if (!items.length) {
     return `
@@ -3431,6 +3562,7 @@ function render() {
   renderMetrics(visibleAds);
   renderDashboardSpotlight(visibleAds);
   renderTable(liveAds);
+  renderOptimizationLog(liveAds);
   renderDemographics(visibleAds);
   renderCategories(visibleAds);
   renderLeaderboards(visibleAds);
