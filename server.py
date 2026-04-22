@@ -1093,13 +1093,29 @@ def describe_new_snapshot(row):
     changes = [f"Uploaded as a new {describe_media_type(row)} into this campaign"]
     headline = compact_text(row.get('headline'))
     if headline:
-        changes.append(f"Launch headline: “{shorten_text(headline)}”")
+        changes.append('Added launch headline')
     primary_text = compact_text(row.get('primary_text'))
     if primary_text:
-        changes.append(f"Launch primary text: “{shorten_text(primary_text)}”")
+        changes.append('Added launch ad copy')
     call_to_action = format_cta_value(row.get('call_to_action'))
     if call_to_action:
-        changes.append(f"Launch CTA: {call_to_action}")
+        changes.append('Added launch call to action')
+
+    title_variants = normalized_variant_values(row.get('title_variants'))
+    if len(title_variants) > 1:
+        changes.append(
+            f"Uploaded with {len(title_variants)} headline variations"
+        )
+    body_variants = normalized_variant_values(row.get('body_variants'))
+    if len(body_variants) > 1:
+        changes.append(
+            f"Uploaded with {len(body_variants)} ad copy variations"
+        )
+    description_variants = normalized_variant_values(row.get('description_variants'))
+    if len(description_variants) > 1:
+        changes.append(
+            f"Uploaded with {len(description_variants)} description variations"
+        )
     return changes
 
 

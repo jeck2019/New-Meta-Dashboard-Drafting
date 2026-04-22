@@ -2742,14 +2742,6 @@ function optimizationEventLabel(eventType) {
   return 'Ad updated';
 }
 
-function toggleOptimizationCampaign(campaignName) {
-  state.expandedOptimizationCampaigns = {
-    ...state.expandedOptimizationCampaigns,
-    [campaignName]: !state.expandedOptimizationCampaigns[campaignName],
-  };
-  render();
-}
-
 function renderOptimizationLog(liveAds) {
   if (!elements.optimizationLogList || !elements.optimizationLogSummary) {
     return;
@@ -2797,13 +2789,8 @@ function renderOptimizationLog(liveAds) {
       const uploadCount = logs.filter((log) => log.eventType === 'new_upload').length;
 
       return `
-        <section class="optimization-log-campaign ${expanded ? 'is-expanded' : ''}">
-          <button
-            type="button"
-            class="optimization-log-campaign-toggle"
-            data-optimization-campaign-key="${campaignKey}"
-            aria-expanded="${expanded ? 'true' : 'false'}"
-          >
+        <details class="optimization-log-campaign ${expanded ? 'is-expanded' : ''}" data-optimization-campaign-key="${campaignKey}" ${expanded ? 'open' : ''}>
+          <summary class="optimization-log-campaign-toggle">
             <div>
               <p class="small-label">Campaign</p>
               <h4>${escapeHtml(campaignName)}</h4>
@@ -2815,9 +2802,9 @@ function renderOptimizationLog(liveAds) {
               ${uploadCount ? `<span class="optimization-log-count-chip">${uploadCount} new upload${uploadCount === 1 ? '' : 's'}</span>` : ''}
               <span class="optimization-log-chevron">${expanded ? 'Collapse' : 'Expand'}</span>
             </div>
-          </button>
+          </summary>
 
-          <div class="optimization-log-campaign-body" ${expanded ? '' : 'hidden'}>
+          <div class="optimization-log-campaign-body">
             ${logs
               .map((log) => {
                 const ad = adsById.get(log.adId) || {};
@@ -2882,16 +2869,24 @@ function renderOptimizationLog(liveAds) {
               })
               .join('')}
           </div>
-        </section>
+        </details>
       `;
     })
     .join('');
 
   elements.optimizationLogList
-    .querySelectorAll('[data-optimization-campaign-key]')
-    .forEach((button) => {
-      button.addEventListener('click', () => {
-        toggleOptimizationCampaign(decodeURIComponent(button.dataset.optimizationCampaignKey || ''));
+    .querySelectorAll('details[data-optimization-campaign-key]')
+    .forEach((details) => {
+      details.addEventListener('toggle', () => {
+        const campaignName = decodeURIComponent(details.dataset.optimizationCampaignKey || '');
+        state.expandedOptimizationCampaigns = {
+          ...state.expandedOptimizationCampaigns,
+          [campaignName]: details.open,
+        };
+        const chevron = details.querySelector('.optimization-log-chevron');
+        if (chevron) {
+          chevron.textContent = details.open ? 'Collapse' : 'Expand';
+        }
       });
     });
 }
