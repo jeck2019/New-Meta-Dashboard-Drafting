@@ -552,13 +552,59 @@ def extract_hook(text):
     return normalized[:100].rstrip()
 
 
-def infer_format(creative):
+VIDEO_NAME_CUES = (
+    'reel',
+    'video',
+    'ugc',
+    'commercial',
+    'clip',
+    'snippet',
+)
+
+STATIC_NAME_CUES = (
+    'graphic',
+    'image',
+    'static',
+    'photo',
+)
+
+
+def text_has_any_cue(value, cues):
+    source = compact_text(value).lower()
+    return any(cue in source for cue in cues)
+
+
+def infer_format(creative, ad=None, video_id='', image_hash=''):
     story = creative.get('object_story_spec') or {}
-    if story.get('video_data'):
-        return 'Video'
+    asset_feed = creative.get('asset_feed_spec') or {}
     link_data = story.get('link_data') or {}
-    if link_data.get('child_attachments'):
-        return 'Carousel'
+
+    if story.get('video_data') or compact_text(video_id):
+        return 'Video'
+
+    child_attachments = link_data.get('child_attachments') or []
+    if any(compact_text(item.get('video_id')) for item in child_attachments):
+        return 'Video'
+
+    asset_videos = asset_feed.get('videos') or []
+    if asset_videos:
+        return 'Video'
+
+    names_to_check = [
+        creative.get('name', ''),
+        (ad or {}).get('name', ''),
+    ]
+    if any(text_has_any_cue(value, VIDEO_NAME_CUES) for value in names_to_check) and not any(
+        text_has_any_cue(value, STATIC_NAME_CUES) for value in names_to_check
+    ):
+        return 'Video'
+
+    if story.get('photo_data') or story.get('template_data') or compact_text(image_hash):
+        return 'Static'
+
+    if any(text_has_any_cue(value, STATIC_NAME_CUES) for value in names_to_check):
+        return 'Static'
+
     return 'Static'
 
 
@@ -667,7 +713,7 @@ def extract_creative_fields(ad):
         'hook': extract_hook(body or headline),
         'landingPage': landing_path,
         'destinationUrl': landing_url,
-        'format': infer_format(creative),
+        'format': infer_format(creative, ad=ad, video_id=video_id, image_hash=image_hash),
         'creativeName': creative.get('name', '') or ad.get('name', ''),
         'callToAction': cta_type,
         'mediaPreviewUrl': preview_url,

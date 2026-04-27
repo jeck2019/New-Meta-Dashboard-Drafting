@@ -1012,6 +1012,33 @@ function buildMockOptimizationLogs(ads) {
   ];
 }
 
+function nameImpliesVideo(name = '') {
+  const source = String(name || '').toLowerCase();
+  return ['reel', 'video', 'ugc', 'commercial', 'clip', 'snippet'].some((token) => source.includes(token));
+}
+
+function nameImpliesStatic(name = '') {
+  const source = String(name || '').toLowerCase();
+  return ['graphic', 'image', 'static', 'photo'].some((token) => source.includes(token));
+}
+
+function normalizeAdFormat(ad = {}) {
+  const rawFormat = String(ad.format || '').trim().toLowerCase();
+  const hasVideoSignal =
+    Boolean(ad.videoId) ||
+    Number(ad.mediaLengthSeconds || 0) > 0 ||
+    (ad.mediaSourceUrl || '').toLowerCase().includes('.mp4') ||
+    (ad.mediaSourceUrl || '').toLowerCase().includes('video') ||
+    (ad.mediaPermalinkUrl || '').toLowerCase().includes('/videos/') ||
+    (nameImpliesVideo(ad.name || ad.creativeName || '') && !nameImpliesStatic(ad.name || ad.creativeName || ''));
+
+  if (hasVideoSignal || rawFormat === 'video') {
+    return 'Video';
+  }
+
+  return 'Static';
+}
+
 function normalizePayload(payload) {
   return {
     ...payload,
@@ -1025,6 +1052,8 @@ function normalizePayload(payload) {
 
       return {
         ...ad,
+        rawFormat: ad.format || '',
+        format: normalizeAdFormat(ad),
         createdAt: ad.createdAt || fallbackCreatedAt,
         adsetName: ad.adsetName || '',
         metrics,
