@@ -81,7 +81,7 @@ ADS_FIELDS_FULL = ','.join([
     'effective_status',
     'campaign{id,name}',
     'adset{id,name}',
-    'creative{id,name,object_story_spec,asset_feed_spec}',
+    'creative{id,name,image_url,thumbnail_url,object_type,object_story_spec,asset_feed_spec}',
 ])
 
 ADS_FIELDS_FALLBACK = ','.join([
@@ -89,7 +89,7 @@ ADS_FIELDS_FALLBACK = ','.join([
     'name',
     'created_time',
     'effective_status',
-    'creative{id,name}',
+    'creative{id,name,image_url,thumbnail_url,object_type}',
 ])
 
 INSIGHTS_FIELDS_FULL = ','.join([
@@ -629,7 +629,7 @@ def extract_creative_fields(ad):
     description = ''
     landing_url = ''
     cta_type = ''
-    preview_url = ''
+    preview_url = creative.get('image_url', '') or creative.get('thumbnail_url', '') or ''
     video_id = ''
     image_hash = ''
 
